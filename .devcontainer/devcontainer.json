@@ -1,0 +1,48 @@
+{
+    "name": "HSR Scene Graph Dev Container",
+    "privileged": true,
+    "remoteUser": "hsr",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "USERNAME": "hsr",
+            "DOCKER_REPO": "osrf/ros",
+            "ROS_DISTRO": "humble",
+            "IMAGE_SUFFIX": "-desktop-full"
+        },
+        "options": ["--build-arg", "BUILDKIT_INLINE_CACHE=1"]
+    },
+    "workspaceFolder": "/home/ws",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/ws,type=bind",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-themes",
+                "twxs.cmake",
+                "donjayamanne.python-extension-pack",
+                "eamodio.gitlens",
+                "ms-iot.vscode-ros",
+                "ms-python.black-formatter"
+            ]
+        }
+    },
+    "containerEnv": {
+        "DISPLAY": "unix:0",
+        "ROS_LOCALHOST_ONLY": "0",
+        "ROS_DOMAIN_ID": "42"
+    },
+    "runArgs": [
+        "--net=host",
+        "-e", "DISPLAY=${localEnv:DISPLAY}",
+        "--gpus", "all"
+    ],
+    "mounts": [
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+        "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached",
+        "source=/home/comrade/hsr_ros2_ws,target=/home/ws/ros2_ws,type=bind,consistency=cached",
+        "source=/home/comrade/Desktop/data_hrl,target=/home/ws/data,type=bind,consistency=cached"
+    ],
+    "initializeCommand": "sh ./.devcontainer/initialize.sh",
+    "postCreateCommand": "sh ./.devcontainer/postCreate.sh"
+}
