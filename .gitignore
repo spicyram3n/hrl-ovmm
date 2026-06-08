@@ -161,7 +161,12 @@ cython_debug/
 .vscode/
 /data/
 /logs/
-/ros2_ws/
+/ros2_ws/build/
+/ros2_ws/install/
+/ros2_ws/log/
+/ros2_ws/src/hsrb_*/
+/ros2_ws/src/hsr_*/
+/ros2_ws/src/tmc_*/
 core/Mask3D/
 core/sam2/
 
