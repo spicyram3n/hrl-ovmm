@@ -22,20 +22,40 @@ RUN groupadd --gid $USER_GID $USERNAME \
     && echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME \
     && chmod 0440 /etc/sudoers.d/$USERNAME
 
-# Install additional packages
+# System packages: ROS nav stack, sim tools, dev tools
 RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y python3-pip python-is-python3 ssh neovim git \
-    ros-humble-control-msgs ros-humble-navigation2
+    apt-get install -y --no-install-recommends \
+    python3-pip python-is-python3 ssh neovim git wget unzip \
+    ros-humble-control-msgs \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
+    ros-humble-nav2-simple-commander \
+    ros-humble-tf-transformations \
+    ros-humble-gazebo-ros-pkgs \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV SHELL /bin/bash
+ENV SHELL=/bin/bash
 
-# Install python dependencies
-RUN pip install open3d openai ikpy graphviz ultralytics apriltag git+https://github.com/openai/CLIP.git "numpy<1.25" transformers hydra-core
-    
+# Python deps for the pure-Python core (NO heavy model deps here:
+# Mask3D and SAM3 run in their own containers, see docker/).
+# numpy<1.25 is required by Humble's cv_bridge / open3d combo.
+RUN pip install --no-cache-dir \
+    "numpy<1.25" \
+    open3d \
+    scipy \
+    scikit-learn \
+    pandas \
+    openai \
+    graphviz \
+    requests \
+    opencv-python \
+    transforms3d \
+    pyyaml
+
 # Source ROS environment automatically
-RUN echo "source /opt/ros/$ROS_DISTRO/setup.bash" >> /home/$USERNAME/.bashrc
-RUN echo "source /home/ws/ros2_ws/install/setup.bash" >> /home/$USERNAME/.bashrc
+RUN echo "source /opt/ros/humble/setup.bash" >> /home/$USERNAME/.bashrc \
+    && echo "[ -f /home/ws/ros2_ws/install/setup.bash ] && source /home/ws/ros2_ws/install/setup.bash" >> /home/$USERNAME/.bashrc \
+    && echo "export PYTHONPATH=\$PYTHONPATH:/home/ws" >> /home/$USERNAME/.bashrc
 
-# Set the default user
 USER $USERNAME
 CMD ["/bin/bash"]

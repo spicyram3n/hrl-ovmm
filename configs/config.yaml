@@ -1,0 +1,18 @@
+project_name: "hrl-hsr-ovmm"
+
+# paths (inside the devcontainer; HRL_DATA_DIR env overrides)
+subpaths:
+  data: "/home/ws/data"
+  prescans: "/home/ws/data/prescans"
+  scene_graph: "/home/ws/data/scene_graph"
+
+# model servers
+servers:
+  sam3:
+    ip: "127.0.0.1"
+    port: 5005
+    route: "sam3/predict"
+  anygrasp:
+    ip: "127.0.0.1"
+    port: 5000
+    route: "graspnet/predict"

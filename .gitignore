@@ -176,5 +176,3 @@ core/sam2/
 /.environment/
 /configs/user.yaml
 /.environment.yaml
-
-OPENMASK_README.md
