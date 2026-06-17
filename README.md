@@ -63,7 +63,8 @@ Repo structure relevant to the pipeline:
 /home/ws/
 ├── core/
 │   ├── perception/
-│   │   ├── scene_graph/      # SceneGraph, ObjectNode, DrawerNode, builders
+│   │   ├── scene_graph/      # SceneGraph, ObjectNode, DrawerNode, builders,
+│   │   │                      # gazebo_geometry (reads sizes from Gazebo SDF)
 │   │   ├── segmentation/      # Mask3D output loader
 │   │   └── detection/         # SAM3 REST client
 │   ├── llm_zone/               # DeepSeek room clustering + scene queries
@@ -73,6 +74,8 @@ Repo structure relevant to the pipeline:
 │   ├── mask3d/                   # Mask3D setup + run scripts (host)
 │   └── sam3/                      # SAM3 detection server (host)
 ├── ros2_ws/src/fetcher/           # ROS 2 nodes (Nav2 goals, scene graph, seeker)
+├── docs/report/                    # scene_graph_report.tex/pdf -- methodology
+│                                    # and demo-day code correlation
 ├── configs/config.yaml            # paths + model server endpoints
 ├── images/sg.png                  # example scene graph output
 └── .devcontainer/                 # VS Code dev container config
@@ -163,10 +166,17 @@ drives to a hardcoded goal `(2.0, 1.0)`.
 ## 6. Scene Graph from Simulation Ground Truth
 
 The simplest and currently primary scene graph builder. Instead of running
-any perception pipeline, it reads a hardcoded registry of every object's
-name, pose and size from `apartment.world.xacro` (the simulation's ground
-truth) and feeds synthesized point clouds through the same `SceneGraph` /
-`ObjectNode` pipeline used for real scans.
+any perception pipeline, it reads every object's name and pose straight from
+`apartment.world.xacro` (the simulation's ground truth), and reads each
+object's *size and shape* by parsing that object's own `model.sdf` collision
+geometry via `core/perception/scene_graph/gazebo_geometry.py` (box, cylinder,
+sphere, or mesh, including COLLADA unit correction). Nothing about an
+object's dimensions is hand-picked -- it feeds synthesized point clouds
+through the same `SceneGraph` / `ObjectNode` pipeline used for real scans.
+
+See [`docs/report/scene_graph_report.pdf`](docs/report/scene_graph_report.pdf)
+for a detailed write-up of this geometry-extraction pipeline (with diagrams),
+plus a full code-correlation walkthrough of every demo-day requirement.
 
 ```bash
 ros2 run fetcher gazebo_scene_graph

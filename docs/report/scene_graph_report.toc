@@ -1,0 +1,37 @@
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Demo-Day Requirements}{3}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Scope of this document}{3}{subsection.1.2}%
+\contentsline {section}{\numberline {2}Repository Layout}{4}{section.2}%
+\contentsline {section}{\numberline {3}System Architecture}{4}{section.3}%
+\contentsline {section}{\numberline {4}Scene Graph Construction Methodology}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}World file parsing and the semantic registry}{6}{subsection.4.1}%
+\contentsline {paragraph}{The only remaining hand-written table.}{6}{section*.3}%
+\contentsline {subsection}{\numberline {4.2}Geometry extraction from Gazebo SDF}{7}{subsection.4.2}%
+\contentsline {subsubsection}{\numberline {4.2.1}Motivation}{7}{subsubsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.2}SDF frame hierarchy and pose composition}{7}{subsubsection.4.2.2}%
+\contentsline {subsubsection}{\numberline {4.2.3}Resolving \texttt {model://} URIs}{9}{subsubsection.4.2.3}%
+\contentsline {subsubsection}{\numberline {4.2.4}Collision shape primitives}{9}{subsubsection.4.2.4}%
+\contentsline {subsubsection}{\numberline {4.2.5}Mesh shapes and the COLLADA unit pitfall}{10}{subsubsection.4.2.5}%
+\contentsline {subsubsection}{\numberline {4.2.6}Assembling a model's bounding box}{10}{subsubsection.4.2.6}%
+\contentsline {subsection}{\numberline {4.3}Point cloud synthesis}{13}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}ObjectNode: centroid, pose, and dimensions}{13}{subsection.4.4}%
+\contentsline {subsection}{\numberline {4.5}SceneGraph: connections and persistence}{14}{subsection.4.5}%
+\contentsline {subsection}{\numberline {4.6}End-to-end build flow}{15}{subsection.4.6}%
+\contentsline {subsection}{\numberline {4.7}Resulting scene graph}{16}{subsection.4.7}%
+\contentsline {subsection}{\numberline {4.8}The real-scan pipeline (Mask3D)}{16}{subsection.4.8}%
+\contentsline {section}{\numberline {5}Demo-Day Requirement to Code Correlation}{17}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Requirement 2: room clustering with an LLM}{18}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Requirement 3: Scenario A / B target resolution}{19}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Requirement 4: navigating to the candidate location}{20}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Requirement 5: observing the location and detecting the object}{20}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Requirement 6: detected -- point cloud, grasp, arm motion}{20}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}Requirement 7: not detected -- next location, then LLM fallback}{21}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}Requirement 8: active perception (head control)}{22}{subsection.5.7}%
+\contentsline {subsection}{\numberline {5.8}Requirement 10: a single command for steps 3--7}{23}{subsection.5.8}%
+\contentsline {section}{\numberline {6}Single-Command Mission: Detailed Flow}{23}{section.6}%
+\contentsline {section}{\numberline {7}Running the Pipeline}{26}{section.7}%
+\contentsline {subsection}{\numberline {7.1}One-time setup}{26}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Bring up the simulation}{26}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Build the scene graph and room clusters (once per scene)}{26}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Run the mission (requirements 3--7, single command)}{26}{subsection.7.4}%
+\contentsline {section}{\numberline {8}Conclusion}{27}{section.8}%

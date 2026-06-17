@@ -54,6 +54,9 @@ def _load_raw() -> tuple[dict, dict]:
         graph = json.load(f)
     with open(GRAPH_DIR / "scene.json") as f:
         scene = json.load(f)
+    if "movable_ids" not in graph:
+        immovable_set = set(graph["immovable_ids"])
+        graph["movable_ids"] = [i for i in graph["node_ids"] if i not in immovable_set]
     return graph, scene
 
 

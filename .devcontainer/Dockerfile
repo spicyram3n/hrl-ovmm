@@ -50,7 +50,9 @@ RUN pip install --no-cache-dir \
     requests \
     opencv-python \
     transforms3d \
-    pyyaml
+    pyyaml \
+    trimesh \
+    pycollada
 
 # Source ROS environment automatically
 RUN echo "source /opt/ros/humble/setup.bash" >> /home/$USERNAME/.bashrc \

@@ -1,18 +1,19 @@
 """
-build_scene_graph.py
---------------------
-Builds the SceneGraph from Mask3D output (closed-vocabulary, ScanNet200),
-following stretch-compose's scenegraph_preprocessing.py / SceneGraph.build.
+build_scene_graph.py  —  REAL ROBOT PATH (Mask3D perception)
+-------------------------------------------------------------
+NOT used in the Gazebo simulation demo.  For the demo, use:
+    python -m core.perception.scene_graph.build_scene_graph_gazebo
 
-Replaces the previous OpenMask3D-based builder. Workflow:
+This builder reads Mask3D 3D instance segmentation output (ScanNet200
+closed-vocabulary labels from a real RGB-D scan) and populates a SceneGraph.
 
-    1. bash docker/mask3d/setup_mask3d.sh                       (once)
-    2. bash docker/mask3d/run_mask3d.sh [workspace]              (per scan, GPU)
-    3. python -m core.perception.scene_graph.build_scene_graph [--workspace <workspace>]
+Workflow on the real robot:
+    1. bash docker/mask3d/setup_mask3d.sh          (once, sets up Mask3D)
+    2. bash docker/mask3d/run_mask3d.sh [ws]       (per scan, needs GPU)
+    3. python -m core.perception.scene_graph.build_scene_graph
 
 --workspace defaults to $HRL_DATA_DIR (or /home/ws/data), where the scan
-data (scene.ply) already lives. Step 3 runs inside the devcontainer; steps
-1-2 run on the host.
+(scene.ply) and Mask3D predictions.txt live.
 """
 
 from __future__ import annotations

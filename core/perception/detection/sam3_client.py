@@ -5,8 +5,9 @@ Thin HTTP client for the SAM3 docker server (docker/sam3).
 
 SAM3 needs Python >= 3.12 / PyTorch >= 2.7 / CUDA >= 12.6, so it cannot run
 inside the ROS 2 Humble devcontainer (Python 3.10). It runs in its own
-container on port 5005 and we talk to it over REST, same pattern as the
-OpenMask3D and AnyGrasp servers.
+container, reached over REST via core/utils/rest_client.py using the
+"sam3" entry in configs/config.yaml, same pattern as the OpenMask3D and
+AnyGrasp servers.
 
 Pipeline this fits into (per video frame, from a ROS 2 node):
 
@@ -35,7 +36,8 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
-import requests
+
+from core.utils.rest_client import RestClient
 
 
 @dataclass
@@ -59,13 +61,9 @@ class Sam3Detection:
         return self.boxes[self.best()]
 
 
-class Sam3Client:
-    def __init__(self, host: str = "localhost", port: int = 5005, timeout: int = 120):
-        self.url = f"http://{host}:{port}/sam3/predict"
-        self.timeout = timeout
-        # Reuse one connection across calls — this client is meant to be
-        # called once per video frame.
-        self.session = requests.Session()
+class Sam3Client(RestClient):
+    def __init__(self, **kwargs):
+        super().__init__(server="sam3", **kwargs)
 
     def detect(self, image_bgr: np.ndarray, prompt: str, conf: float = 0.5) -> Sam3Detection:
         """image_bgr: OpenCV image (as delivered by cv_bridge)."""
@@ -73,14 +71,10 @@ class Sam3Client:
         if not ok:
             raise ValueError("Could not encode image")
 
-        response = self.session.post(
-            self.url,
+        response = self.post(
             files={"image": ("frame.jpg", encoded.tobytes(), "image/jpeg")},
             params={"prompt": prompt, "conf": conf},
-            timeout=self.timeout,
         )
-        if response.status_code != 200:
-            raise RuntimeError(f"SAM3 server error {response.status_code}: {response.text}")
 
         meta = json.loads(response.headers["X-Sam3-Meta"])
         n, h, w = meta["num_instances"], meta["height"], meta["width"]

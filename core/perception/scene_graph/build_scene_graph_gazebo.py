@@ -5,12 +5,20 @@ Builds the SceneGraph from the ground-truth object list of
 ros2_ws/src/tmc_gazebo/tmc_gazebo_worlds/worlds/apartment.world.xacro
 (world name 'default').
 
-Names and poses are read directly from the world file: `xacro` expands the
-.xacro to plain SDF, then every <include> whose name is a known object (see
-NAME_TO_LABEL) is paired with a hand-picked local bounding box (dims,
-center_z) from LABEL_GEOMETRY to synthesize a small point cloud. That point
-cloud is fed into SceneGraph.add_node() exactly like build_scene_graph.py does
-for Mask3D instances.
+Everything is read from Gazebo's own files - nothing about an object's size
+or shape is hand-picked:
+  - `xacro` expands the .xacro to plain SDF, giving every <include>'s name,
+    model:// uri and world-frame pose.
+  - <include> names that are known objects (see NAME_TO_LABEL) are kept; the
+    rest (walls, doors, ...) are structural and skipped.
+  - For each kept model:// uri, gazebo_geometry.model_local_bbox() resolves
+    the model via GAZEBO_MODEL_PATH, parses its SDF collision geometry
+    (box/cylinder/sphere/mesh) and returns the model's local bounding box
+    (dims, center).
+  - synthesize_points() samples a small point cloud filling that box, rotated
+    and translated by the include's world-frame pose. That point cloud is fed
+    into SceneGraph.add_node() exactly like build_scene_graph.py does for
+    Mask3D instances.
 
 Usage:
     python -m core.perception.scene_graph.build_scene_graph_gazebo [--visualize]
@@ -31,6 +39,7 @@ from scipy.spatial import KDTree
 # allow running as a script from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from core.perception.scene_graph.gazebo_geometry import euler_to_matrix, model_local_bbox
 from core.perception.scene_graph.scene_graph import SceneGraph
 
 DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
@@ -77,32 +86,10 @@ NAME_TO_LABEL = {
     "pear_01": "pear",
 }
 
-# label -> (dims=(w, d, h), center_z) in the local (unrotated) frame.
-# center_z = height of the geometric center above pose.z. Hand-picked from
-# each model's SDF; shared by every instance of a label.
-LABEL_GEOMETRY = {
-    "trolley": ((0.47, 0.44, 0.68), 0.34),
-    "couch": ((0.8, 1.3, 0.75), 0.375),
-    "coffee table": ((0.68, 1.13, 0.4), 0.2),
-    "desk": ((0.6, 1.2, 0.7), 0.35),
-    "chair": ((0.45, 0.45, 0.85), 0.425),
-    "cabinet": ((0.46, 1.15, 0.6), 0.3),
-    "table": ((0.5, 2.3, 1.05), 0.525),
-    "shelf": ((0.3, 0.45, 1.8), 0.9),
-    "medicine box": ((0.083, 0.135, 0.026), 0),
-    "wallet": ((0.11, 0.09, 0.02), 0),
-    "orange": ((0.066, 0.066, 0.1235), 0),
-    "pringles can": ((0.066, 0.066, 0.225), 0),
-    "apple": ((0.09, 0.09, 0.09), 0),
-    "banana": ((0.18, 0.05, 0.05), 0),
-    "pear": ((0.08, 0.08, 0.11), 0),
-}
-
-
 def load_registry(world_xacro: Path = WORLD_XACRO) -> list[dict]:
     """Expand `world_xacro` with `xacro` and read every <include> whose name
-    is in NAME_TO_LABEL, pairing its world-file pose with the label's
-    hand-picked geometry from LABEL_GEOMETRY."""
+    is in NAME_TO_LABEL, looking up each model's local bounding box
+    (dims, center) from its own SDF via gazebo_geometry.model_local_bbox()."""
     expanded = subprocess.run(
         ["xacro", str(world_xacro)], capture_output=True, text=True, check=True
     ).stdout
@@ -115,42 +102,32 @@ def load_registry(world_xacro: Path = WORLD_XACRO) -> list[dict]:
         if label is None:
             continue
         pose = tuple(float(v) for v in include.findtext("pose").split())
-        dims, center_z = LABEL_GEOMETRY[label]
-        registry.append({"name": name, "label": label, "pose": pose, "dims": dims, "center_z": center_z})
+        dims, center = model_local_bbox(include.findtext("uri"))
+        registry.append({"name": name, "label": label, "pose": pose, "dims": dims, "center": center})
     return registry
 
 
-def _euler_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """Rotation matrix for SDF's <pose> roll/pitch/yaw (R = Rz @ Ry @ Rx)."""
-    cr, sr = np.cos(roll), np.sin(roll)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    return Rz @ Ry @ Rx
-
-
-def synthesize_points(pose, dims, center_z, n: int = 5) -> np.ndarray:
+def synthesize_points(pose, dims, center, n: int = 5) -> np.ndarray:
     """Sample an n x n x n grid of points filling a box of size `dims`,
-    centered at (0, 0, center_z) in the object's local frame, then rotate by
-    the pose's roll/pitch/yaw and translate by its x/y/z."""
+    centered at `center` in the object's local frame, then rotate by the
+    pose's roll/pitch/yaw and translate by its x/y/z."""
     x, y, z, roll, pitch, yaw = pose
     w, d, h = dims
+    cx, cy, cz = center
 
-    xs = np.linspace(-w / 2, w / 2, n)
-    ys = np.linspace(-d / 2, d / 2, n)
-    zs = center_z + np.linspace(-h / 2, h / 2, n)
+    xs = cx + np.linspace(-w / 2, w / 2, n)
+    ys = cy + np.linspace(-d / 2, d / 2, n)
+    zs = cz + np.linspace(-h / 2, h / 2, n)
     grid = np.stack(np.meshgrid(xs, ys, zs, indexing="ij"), axis=-1).reshape(-1, 3)
 
-    R = _euler_to_matrix(roll, pitch, yaw)
+    R = euler_to_matrix(roll, pitch, yaw)
     return grid @ R.T + np.array([x, y, z])
 
 
 def build_from_world(scene_graph: SceneGraph, registry: list[dict]) -> None:
     """Populate scene_graph from `registry` (see load_registry)."""
     for entry in registry:
-        points = synthesize_points(entry["pose"], entry["dims"], entry["center_z"])
+        points = synthesize_points(entry["pose"], entry["dims"], entry["center"])
         scene_graph.add_node(
             color=np.array([0.5, 0.5, 0.5]),
             sem_label=entry["label"],
@@ -180,11 +157,7 @@ def main() -> None:
     args = parser.parse_args()
 
     registry = load_registry(args.world_xacro)
-    labels = {entry["label"] for entry in registry}
-    scene_graph = SceneGraph(
-        label_mapping={label: label for label in labels},
-        immovable=IMMOVABLE_LABELS_GZ,
-    )
+    scene_graph = SceneGraph(immovable=IMMOVABLE_LABELS_GZ)
     build_from_world(scene_graph, registry)
     scene_graph.save_all(args.graph_dir)
 

@@ -1,14 +1,20 @@
 """
-room_clustering.py
-------------------
-Demo step 2: use the LLM API to cluster the furniture of the scene graph
-into rooms ("kitchen", "living room", ...). Pure Python, no ROS.
+room_clustering.py  —  offline preprocessing step
+--------------------------------------------------
+Run this ONCE after building the scene graph to cluster furniture into rooms.
+The output (rooms.json) is read at runtime by scene_query.predict_locations()
+to add room-name context when the LLM predicts where to search for an object.
 
-Input:  scene.json (furniture with centroids) from the scene graph builder
-Output: rooms.json
+Pipeline:
+    1. build scene graph  →  data/scene_graph/scene.json
+    2. THIS SCRIPT        →  data/scene_graph/rooms.json   ← run once
+    3. ros2 run fetcher search_and_fetch "<object>"        ← reads rooms.json
+
+Input:  data/scene_graph/scene.json  (furniture with centroids)
+Output: data/scene_graph/rooms.json
     {
         "rooms": [
-            {"name": "kitchen", "furniture_ids": [3, 7], "centroid": [x, y, z]}
+            {"name": "living room", "furniture_ids": [2, 3, 4], "centroid": [x, y, z]}
         ]
     }
 

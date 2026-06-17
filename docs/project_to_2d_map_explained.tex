@@ -1,0 +1,228 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+\lstdefinestyle{py}{
+    backgroundcolor=\color{gray!5},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!40},
+    numbers=left,
+    numberstyle=\tiny\color{gray!60},
+    language=Python,
+    tabsize=4,
+    columns=fullflexible,
+}
+\lstset{style=py}
+
+\title{Line by line explanation of \texttt{project\_to\_2d\_map.py}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Overview}
+
+This script takes a 3D scan (a list of points in space) and turns it into a flat 2D map that a robot can use for navigation. It does this in four steps. First it breaks the 3D space into small cubes called voxels. Then it finds the floor. Then it keeps only the voxels at the height of the robot's sensor and flattens them into a picture. Finally it saves that picture in a format the navigation software can read.
+
+\section{\texttt{voxelise}}
+
+\begin{lstlisting}
+def voxelise(pcd, voxel_size):
+    vg = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size)
+    idx = np.array([v.grid_index for v in vg.get_voxels()])
+    return idx, np.asarray(vg.origin)
+\end{lstlisting}
+
+This function splits the point cloud into a grid of cubes of side length $s$ (the variable \texttt{voxel\_size}). Every point $p = (x, y, z)$ in the cloud falls into exactly one cube. The cube that a point falls into is found with
+
+\[
+\mathbf{i}(p) = \left\lfloor \frac{p - o}{s} \right\rfloor
+\]
+
+where $o$ is the corner of the whole grid (the origin) and the floor brackets mean round down to the nearest whole number. This gives an integer triple $(i, j, k)$ for each cube. A cube only shows up in the result if at least one point landed inside it.
+
+\textbf{Line 2.} Asks Open3D to build this grid from the point cloud using cube size $s$.
+
+\textbf{Line 3.} Reads out the integer index $(i, j, k)$ of every cube that has at least one point in it, and stacks them into one array.
+
+\textbf{Line 4.} Returns that array of indices together with the grid origin $o$, since later steps need $o$ to convert indices back into real world meters.
+
+\section{\texttt{detect\_floor\_z}}
+
+\begin{lstlisting}
+def detect_floor_z(pcd, distance_threshold=0.02, ransac_n=3, num_iterations=1000):
+    plane, inliers = pcd.segment_plane(distance_threshold, ransac_n, num_iterations)
+    normal = np.array(plane[:3])
+    normal /= np.linalg.norm(normal)
+    if abs(normal[2]) < 0.9:
+        raise RuntimeError(...)
+    return np.asarray(pcd.points)[inliers][:, 2].mean()
+\end{lstlisting}
+
+This function finds the floor by fitting a flat plane to the scan using RANSAC, a method that picks random small groups of points, fits a plane through each group, and keeps the plane that the most other points agree with.
+
+A flat plane in 3D can always be written as
+
+\[
+a x + b y + c z + d = 0
+\]
+
+The numbers $a, b, c, d$ describe the plane. The vector $n = (a, b, c)$ points straight out of the plane and is called the normal.
+
+The distance from any point $p = (x, y, z)$ to this plane is
+
+\[
+\text{dist}(p) = \frac{|a x + b y + c z + d|}{\sqrt{a^2 + b^2 + c^2}}
+\]
+
+A point counts as belonging to the plane (an inlier) if this distance is smaller than the threshold $\tau$ (the variable \texttt{distance\_threshold}).
+
+\textbf{Line 2.} Runs RANSAC. It tries many random sets of \texttt{ransac\_n} points, fits a plane to each set, and keeps the plane with the most inliers after \texttt{num\_iterations} tries. It returns the plane numbers $(a, b, c, d)$ and the list of points that agree with it.
+
+\textbf{Line 3 to 4.} Takes the normal vector $n = (a, b, c)$ and rescales it to length one, so $\hat n = n / \lVert n \rVert$. A vector of length one is easier to compare to straight up or straight down.
+
+\textbf{Line 5 to 6.} Checks that the plane is roughly horizontal. Since the scan is assumed to have $z$ pointing straight up, the floor's normal should point mostly along the $z$ axis, meaning $|\hat n_z|$ should be close to one. The check $|\hat n_z| < 0.9$ corresponds to the plane being tilted by more than about 26 degrees from horizontal, since $\cos(26^\circ) \approx 0.9$. If the biggest flat surface in the scan is tilted that much, it is probably a wall, not a floor, so the function stops with an error instead of guessing wrong.
+
+\textbf{Line 7.} Takes the $z$ coordinate of every inlier point and averages them, giving the floor height
+
+\[
+\bar z = \frac{1}{|I|} \sum_{i \in I} z_i
+\]
+
+where $I$ is the set of inlier point indices. This average is more reliable than using the single lowest point, since one stray noisy point near the ground would otherwise throw the floor height off.
+
+\section{\texttt{height\_band\_mask}}
+
+\begin{lstlisting}
+def height_band_mask(idx, origin, voxel_size, sensor_height, band, floor_z):
+    z = origin[2] + (idx[:, 2] + 0.5) * voxel_size
+    h = z - floor_z
+    return (h >= sensor_height - band) & (h <= sensor_height + band)
+\end{lstlisting}
+
+This function decides which voxels are at the same height as the robot's 2D sensor, since a flat 2D sensor only sees a thin horizontal slice of the world.
+
+\textbf{Line 2.} Converts the voxel's $z$ index $k$ back into a real world height in meters. Each voxel is a cube of size $s$, so the cube with index $k$ sits between heights $o_z + k s$ and $o_z + (k+1)s$. Adding $0.5$ before multiplying gives the height of the middle of the cube instead of its edge:
+
+\[
+z = o_z + (k + 0.5) \, s
+\]
+
+\textbf{Line 3.} Subtracts the floor height found earlier, so $h = z - \bar z$ is now the height of the voxel above the floor, no matter where the floor sits in the original scan's coordinates.
+
+\textbf{Line 4.} Keeps only the voxels whose height above the floor falls inside a thin band around the sensor height. If $H$ is the sensor height and $b$ is the half thickness of the band, a voxel survives when
+
+\[
+H - b \le h \le H + b
+\]
+
+This mimics what a 2D sensor mounted at height $H$ would actually detect.
+
+\section{\texttt{to\_occupancy\_image}}
+
+\begin{lstlisting}
+def to_occupancy_image(ij):
+    offset = ij.min(axis=0)
+    ij = ij - offset
+    w, h = ij[:, 0].max() + 1, ij[:, 1].max() + 1
+
+    occ = np.full((h, w), FREE, dtype=np.uint8)
+    rows = (h - 1) - ij[:, 1]
+    occ[rows, ij[:, 0]] = OCCUPIED
+    return occ, offset
+\end{lstlisting}
+
+This function takes the surviving voxels, which are still just a list of flat $(i, j)$ grid positions, and turns them into a picture, which is a grid of pixels.
+
+\textbf{Line 2.} Finds the smallest $i$ and smallest $j$ among all the surviving voxels. Call this pair $(i_{\min}, j_{\min})$.
+
+\textbf{Line 3.} Shifts every voxel position so the smallest one becomes $(0, 0)$:
+
+\[
+(i, j) \mapsto (i - i_{\min},\ j - j_{\min})
+\]
+
+This is needed because a picture's pixels are always numbered starting from zero, but the original voxel indices could be any whole numbers, even negative ones.
+
+\textbf{Line 4.} Finds how wide and tall the picture needs to be. Since indices start at zero, the picture must be one wider than the largest $i$ and one taller than the largest $j$, giving width $w$ and height $h$.
+
+\textbf{Line 6.} Creates a blank picture of height $h$ and width $w$, where every pixel starts out marked \texttt{FREE} (open space).
+
+\textbf{Line 7.} Flips the picture top to bottom. In an image, row $0$ is normally drawn at the top, but in the real world, larger $j$ means further up, not further down. So a voxel at row $j$ in the world should be drawn at picture row
+
+\[
+\text{row} = (h - 1) - j
+\]
+
+which puts the largest $j$ at the top of the picture, matching how the real world looks.
+
+\textbf{Line 8.} Marks every surviving voxel's pixel as \texttt{OCCUPIED} (blocked space) at its flipped row and its column $i$.
+
+\textbf{Line 9.} Returns the finished picture along with the offset $(i_{\min}, j_{\min})$, which is needed afterward to know where pixel $(0,0)$ actually sits in the real world.
+
+\section{\texttt{save\_map}}
+
+\begin{lstlisting}
+def save_map(occ, origin_xy, resolution, out_stem):
+    ...
+    with open(pgm, "wb") as f:
+        f.write(f"P5\n{w} {h}\n255\n".encode())
+        f.write(occ.tobytes())
+
+    with open(out_stem.with_suffix(".yaml"), "w") as f:
+        yaml.safe_dump({...}, f, sort_keys=False)
+\end{lstlisting}
+
+This function writes the picture and its metadata to disk in a format the navigation software understands.
+
+\textbf{PGM file.} The header line \texttt{P5} marks this as a binary grayscale image. The next line gives the width and height in pixels. The line \texttt{255} says each pixel value ranges from $0$ to $255$. After the header, the raw pixel values are written one byte at a time, row by row.
+
+\textbf{Pixel value to probability.} The navigation software treats each pixel value $v$ between $0$ and $255$ as standing for a probability that the spot is occupied, using
+
+\[
+p = 1 - \frac{v}{255}
+\]
+
+A pixel is read as occupied if $p$ is above \texttt{occupied\_thresh}, and free if $p$ is below \texttt{free\_thresh}. Since this script only ever writes pure \texttt{OCCUPIED} ($v=0$, so $p=1$) or pure \texttt{FREE} ($v=254$, so $p \approx 0$), every pixel ends up clearly on one side or the other.
+
+\textbf{YAML file.} This stores the resolution $s$ (meters per pixel) and the real world position \texttt{origin\_xy} of the bottom left pixel of the image, so the navigation software can place the picture at the correct spot in the world.
+
+\section{\texttt{project}}
+
+\begin{lstlisting}
+def project(scan_path, out_stem, resolution=0.05, sensor_height=0.20, band=0.05,
+            floor_threshold=0.02):
+    pcd = o3d.io.read_point_cloud(str(scan_path))
+    floor_z = detect_floor_z(pcd, distance_threshold=floor_threshold)
+    idx, origin = voxelise(pcd, resolution)
+
+    mask = height_band_mask(idx, origin, resolution, sensor_height, band, floor_z)
+    ...
+    occ, (i_min, j_min) = to_occupancy_image(idx[mask, :2])
+    origin_xy = (origin[0] + i_min * resolution, origin[1] + j_min * resolution)
+    pgm = save_map(occ, origin_xy, resolution, out_stem)
+\end{lstlisting}
+
+This function runs all the previous steps in order, one after another.
+
+\textbf{Reads the scan,} then \textbf{finds the floor height} $\bar z$ with RANSAC, then \textbf{splits the scan into voxels} of size $s$, then \textbf{keeps only the voxels at sensor height,} then \textbf{flattens them into a picture.}
+
+\textbf{Putting the picture back in the world.} The picture's bottom left pixel was shifted to $(0,0)$ inside \texttt{to\_occupancy\_image}, but it actually sits at voxel index $(i_{\min}, j_{\min})$ in the original grid, which itself started at the grid origin $o$. So the real world position of the bottom left pixel is
+
+\[
+\text{origin}_{x} = o_x + i_{\min} \, s, \qquad
+\text{origin}_{y} = o_y + j_{\min} \, s
+\]
+
+This is the position written into the YAML file so the picture lines up correctly with the real world.
+
+\end{document}
