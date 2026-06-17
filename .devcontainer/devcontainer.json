@@ -40,8 +40,8 @@
     "mounts": [
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
         "source=/dev/dri,target=/dev/dri,type=bind,consistency=cached",
-        "source=/home/comrade/hsr_ros2_ws,target=/home/ws/ros2_ws,type=bind,consistency=cached",
-        "source=/home/comrade/Desktop/data_hrl,target=/home/ws/data,type=bind,consistency=cached"
+        "source=${localEnv:HOME}/hsr_ros2_ws,target=/home/ws/ros2_ws,type=bind,consistency=cached",
+        "source=/home/user/sesettip1/Desktop/data_hrl,target=/home/ws/data,type=bind,consistency=cached"
     ],
     "initializeCommand": "sh ./.devcontainer/initialize.sh",
     "postCreateCommand": "sh ./.devcontainer/postCreate.sh"

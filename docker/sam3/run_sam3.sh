@@ -1,13 +1,19 @@
 #!/bin/bash
 # Build and run the SAM3 server. Run ON THE HOST.
 # The facebook/sam3 checkpoint is gated: accept the license on Hugging Face
-# and export HF_TOKEN before running.
+# and put your token in docker/sam3/.env (gitignored) as:
 #
-#   export HF_TOKEN=hf_xxx
-#   bash docker/sam3/run_sam3.sh
+#   HF_TOKEN=hf_xxx
+#
+# or export HF_TOKEN before running to override it.
 set -e
 
 cd "$(dirname "$0")"
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
 docker build -t hrl/sam3:latest .
 docker run --gpus all -it --rm \
     --net=host \
