@@ -25,15 +25,12 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
 
 from core.llm_zone._deepseek import get_client, strip_think
-
-DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
-GRAPH_DIR = DATA_DIR / "scene_graph"
+from core.utils.config import GRAPH_DIR
 
 SYSTEM = (
     "You are a spatial reasoning agent. You receive a JSON list of furniture "

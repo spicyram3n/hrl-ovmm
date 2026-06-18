@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import networkx as nx
 import numpy as np
 import open3d as o3d
 import open3d.visualization.gui as gui  # type: ignore
@@ -52,8 +53,7 @@ class SceneGraph:
                  pose: Optional[np.ndarray] = None):
         self.index = 0
         self.nodes: dict[int, ObjectNode] = {}
-        self.outgoing: dict[int, int] = {}       # movable_id  → furniture_id
-        self.ingoing:  dict[int, list[int]] = {} # furniture_id → [movable_ids]
+        self.graph = nx.DiGraph()  # edge movable_id -> furniture_id
         self.ids: list[int] = []
         self.label_mapping = label_mapping       # None means labels are already strings
         self.min_confidence = min_confidence
@@ -89,40 +89,47 @@ class SceneGraph:
         self.ids.append(self.index)
         self.index += 1
 
+    def _support_score(self, node: ObjectNode, furniture: ObjectNode) -> float:
+        """XY proximity + a Z support heuristic: furniture whose centroid is
+        above the object is penalised, so a shelf the object rests on scores
+        better than a taller shelf beside it."""
+        xy_dist = np.linalg.norm(node.centroid[:2] - furniture.centroid[:2])
+        z_penalty = max(0.0, furniture.centroid[2] - node.centroid[2])
+        return xy_dist + z_penalty
+
     def update_connection(self, node: ObjectNode) -> None:
-        """
-        Connect a movable node to its supporting furniture.
-
-        Scoring uses XY proximity combined with a Z support heuristic:
-        furniture whose centroid is above the object is penalised, so a shelf
-        the object rests on scores better than a taller shelf beside it.
-
-        Score = XY_distance + max(0, furniture_z - object_z)
-        """
+        """Connect a movable node to its best-scoring supporting furniture
+        (see _support_score), replacing any previous connection."""
         if not node.movable:
             return
 
-        best_id, best_score = None, np.inf
-        for furn in self.nodes.values():
-            if furn.movable:
-                continue
-            xy_dist = np.linalg.norm(node.centroid[:2] - furn.centroid[:2])
-            z_penalty = max(0.0, furn.centroid[2] - node.centroid[2])
-            score = xy_dist + z_penalty
-            if score < best_score:
-                best_score = score
-                best_id = furn.object_id
-
-        if best_id is None:
+        furniture = [f for f in self.nodes.values() if not f.movable]
+        if not furniture:
             return
+        best = min(furniture, key=lambda f: self._support_score(node, f))
 
-        old = self.outgoing.get(node.object_id)
-        if old == best_id:
+        if self.graph.has_edge(node.object_id, best.object_id):
             return
-        if old is not None:
-            self.ingoing[old].remove(node.object_id)
-        self.outgoing[node.object_id] = best_id
-        self.ingoing.setdefault(best_id, []).append(node.object_id)
+        if node.object_id in self.graph:
+            self.graph.remove_edges_from(list(self.graph.out_edges(node.object_id)))
+        self.graph.add_edge(node.object_id, best.object_id)
+
+    def finalize_and_report(self, source_label: str) -> None:
+        """Common tail end of every builder (build_scene_graph.py,
+        build_scene_graph_gazebo.py): connect movables to their nearest
+        furniture, build the spatial index, assign display colors, and
+        print a per-node summary."""
+        for node in self.nodes.values():
+            self.update_connection(node)
+        self.tree = KDTree(np.array([self.nodes[i].centroid for i in self.ids]))
+        self.color_with_ibm_palette()
+
+        print(f"[build] {len(self.nodes)} nodes from {source_label}")
+        for node in self.nodes.values():
+            kind = "furniture" if not node.movable else "object"
+            print(f"  [{node.object_id:3d}] {self._resolve(node.sem_label):<20} {kind:<10} "
+                  f"conf={node.confidence:.2f} pts={node.points.shape[0]:5d} "
+                  f"centroid={np.round(node.centroid, 2)} dims={np.round(node.dimensions, 2)}")
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -131,7 +138,7 @@ class SceneGraph:
         data = {
             "node_ids":         self.ids,
             "node_labels":      [self._resolve(self.nodes[i].sem_label) for i in self.ids],
-            "connections":      self.outgoing,
+            "connections":      {u: v for u, v in self.graph.edges()},
             "movable_ids":      [i for i, n in self.nodes.items() if n.movable],
             "immovable_ids":    [i for i, n in self.nodes.items() if not n.movable],
             "immovable_labels": [self._resolve(n.sem_label)
@@ -209,17 +216,17 @@ class SceneGraph:
         return float(dists[best]), movable[best]
 
     def remove_node(self, remove_index: int) -> None:
-        """Delete a node, re-wire its edges, and rebuild the KD-tree."""
+        """Delete a node, re-wire any movables that pointed to it, and
+        rebuild the KD-tree."""
         self.nodes.pop(remove_index, None)
         self.ids.remove(remove_index)
-        old_target = self.outgoing.pop(remove_index, None)
-        for mid in self.ingoing.pop(remove_index, []):
-            self.outgoing.pop(mid, None)
-            self.update_connection(self.nodes[mid])
-        if old_target is not None:
-            lst = self.ingoing.get(old_target, [])
-            if remove_index in lst:
-                lst.remove(remove_index)
+
+        if remove_index in self.graph:
+            affected = list(self.graph.predecessors(remove_index))
+            self.graph.remove_node(remove_index)  # drops in/out edges too
+            for mid in affected:
+                self.update_connection(self.nodes[mid])
+
         if self.ids:
             self.tree = KDTree(np.array([self.nodes[i].centroid for i in self.ids]))
 
@@ -268,9 +275,9 @@ class SceneGraph:
                                  dtype=np.float64), 0, 1))
             geometries.append((cpcd, "centroids", mat))
 
-        if connections and self.outgoing:
+        if connections and self.graph.number_of_edges():
             pts, lines = [], []
-            for k, (src, dst) in enumerate(self.outgoing.items()):
+            for k, (src, dst) in enumerate(self.graph.edges()):
                 pts += [self.nodes[src].centroid, self.nodes[dst].centroid]
                 lines.append([2 * k, 2 * k + 1])
             ls = o3d.geometry.LineSet(

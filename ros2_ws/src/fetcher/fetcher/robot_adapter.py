@@ -5,15 +5,13 @@ robot_adapter.py
 ROS 2 implementation of the `RobotAdapter` protocol from
 core/missions/search_and_fetch.py for the HSRC robot.
 
-navigate_to -> nav2_simple_commander.BasicNavigator (same pattern as
-               good_boy.py / seeker.py)
+navigate_to -> nav2_simple_commander.BasicNavigator
 look_at     -> TF + core/perception/head_geometry.py, publishes to
                /head_trajectory_controller/joint_trajectory
-get_rgbd    -> cached head camera topics (same topics as seeker.py)
-grasp       -> core/perception/grasping/anygrasp_client.py (AnyGrasp server,
-               same as scripts/grasp_pipeline.py) for a collision-aware grasp
-               pose, then the same analytic arm-joint formula grasp_pipeline.py
-               uses - no separate IK service, since AnyGrasp's own grasp
+get_rgbd    -> cached head camera topics
+grasp       -> core/perception/grasping/anygrasp_client.py (AnyGrasp server)
+               for a collision-aware grasp pose, then an analytic arm-joint
+               formula - no separate IK service, since AnyGrasp's own grasp
                selection already accounts for collisions
 
 navigate_to() and look_at() receive poses/points sourced from the Gazebo
@@ -153,7 +151,15 @@ class HsrRobotAdapter(Node):
         else:
             self.get_logger().warn('Timed out waiting for sensors/TF - continuing anyway')
 
-        self.nav.waitUntilNav2Active()
+        # waitUntilNav2Active(localizer='amcl') (the default) publishes a
+        # (0, 0, 0) /initialpose before checking AMCL is active - fine on a
+        # cold start, but AMCL keeps running across mission reruns and is
+        # already tracking the robot's real pose, so that would snap its
+        # belief back to the map origin (the spawn point) every run. Passing
+        # a non-'amcl' localizer skips that publish; bt_navigator being
+        # active already implies amcl (started earlier in the same bringup)
+        # is too.
+        self.nav.waitUntilNav2Active(localizer='bt_navigator')
         self.get_logger().info('Robot adapter ready.')
 
     # ── navigation ────────────────────────────────────────────────────────────
@@ -247,8 +253,7 @@ class HsrRobotAdapter(Node):
         self.gripper_pub.publish(traj)
 
     def _camera_to_base(self, tf_matrix_cam: np.ndarray) -> np.ndarray | None:
-        """4x4 grasp pose, camera frame -> base_footprint (ported from
-        scripts/grasp_pipeline.py's camera_to_base)."""
+        """4x4 grasp pose, camera frame -> base_footprint."""
         try:
             transform = self.tf_buf.lookup_transform(
                 BASE_FRAME, CAMERA_FRAME, rclpy.time.Time(),
@@ -271,8 +276,7 @@ class HsrRobotAdapter(Node):
         return T_cam_base @ tf_matrix_cam
 
     def _grasp_pose_to_joints(self, tf_base: np.ndarray) -> dict:
-        """Analytic arm joints from a grasp position in base frame (ported
-        from scripts/grasp_pipeline.py's grasp_pose_to_joints). AnyGrasp's
+        """Analytic arm joints from a grasp position in base frame. AnyGrasp's
         own candidate selection already accounts for collisions, so this
         only needs to reach the chosen pose - no separate IK service."""
         x, y, z = tf_base[:3, 3]

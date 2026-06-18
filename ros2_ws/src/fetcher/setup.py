@@ -27,8 +27,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'good_boy = fetcher.good_boy:main',
-            'seeker = fetcher.seeker:main',
             'gazebo_scene_graph = fetcher.gazebo_scene_graph:main',
             'search_and_fetch = fetcher.search_and_fetch_node:main',
         ],

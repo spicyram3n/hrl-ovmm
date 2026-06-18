@@ -62,6 +62,35 @@ Intentional standalone tools (`room_clustering.py`, `build_scene_graph.py`, ever
 
 All three were verified to produce identical output to the code they replaced before being committed to this log.
 
+---
+
+# Session 2 — 2026-06-18: AMCL pose-reset fix, networkx refactor, more cleanup
+
+Continues the log above. Same scope note applies: everything below is inside `fetcher`/`core`/`scripts`/`docker`/`.devcontainer`, no official HSR/TMC packages touched.
+
+## 9. Fixed AMCL snapping the robot back to the spawn point on every mission rerun
+
+**Symptom:** run `ros2 run fetcher search_and_fetch "<object>"` once, the robot drives somewhere and finishes; run it again (Gazebo + Nav2 left running, only the mission script restarted) and it behaves as if the robot were back at the origin — bad nav goals, costmap built around the wrong pose.
+
+**Cause:** `robot_adapter.py`'s `wait_until_ready()` called `self.nav.waitUntilNav2Active()`. `BasicNavigator`'s default `localizer='amcl'` makes that method publish a `(0, 0, 0)` `/initialpose` in a loop until it sees an `amcl_pose` reply (`nav2_simple_commander/robot_navigator.py:_waitForInitialPose`). Since a fresh `BasicNavigator()` is constructed every time the mission script runs, this fired every run — forcibly resetting AMCL's already-correct belief to the spawn point, regardless of where the robot actually was.
+
+**Fix:** `wait_until_ready()` now calls `self.nav.waitUntilNav2Active(localizer='bt_navigator')` instead. Passing a non-`'amcl'` value skips the `/initialpose` publish entirely while still blocking until Nav2 is active (bt_navigator being active already implies amcl is too, since it starts earlier in the same bringup).
+
+**File:** `ros2_ws/src/fetcher/fetcher/robot_adapter.py`
+
+## 10. Second simplification pass + SceneGraph internals → networkx
+
+- **Deleted `scripts/grasp_pipeline.py`** (375 lines): a standalone prototype, never imported anywhere, that hand-rolled the AnyGrasp REST call, `camera_to_base`, and `grasp_pose_to_joints` — all three already live properly in `robot_adapter.py` + `core/perception/grasping/anygrasp_client.py` (which the prototype predates). It was the throwaway script that became the real implementation; keeping it around was just a second, divergence-prone copy of the grasp math.
+- **`scripts/sam3_segment.py` and `scripts/sam3_live_detect.py`** each had their own mask/box overlay-drawing code, subtly different (one blended in-place, the other used `cv2.addWeighted`). Extracted a single `draw_detections()` into `core/perception/detection/sam3_client.py`; both scripts now call it.
+- **`build_scene_graph.py` and `build_scene_graph_gazebo.py`** duplicated their "finalize" tail verbatim: wire up `update_connection`, rebuild the KD-tree, assign colors, print a per-node summary. Moved this into `SceneGraph.finalize_and_report(source_label)`; both builders now make one call instead.
+- **`DATA_DIR`/`GRAPH_DIR`** (`Path(os.environ.get("HRL_DATA_DIR", ...)) / "scene_graph"`) was copy-pasted identically in `scene_query.py`, `room_clustering.py`, and both scene-graph builders. Moved into `core/utils/config.py`, imported everywhere else.
+- **Moved `active_perception.py`** from `core/llm_zone/` to `core/perception/` — it's pure nav geometry (`approach_pose`, `viewpoints`), not LLM-calling code, so it didn't belong next to `scene_query.py`/`room_clustering.py`/`_deepseek.py`.
+- **`SceneGraph`'s manual `outgoing`/`ingoing` dict pair → `networkx.DiGraph`.** The class kept two dicts (`movable_id → furniture_id` and `furniture_id → [movable_ids]`) in sync by hand in `update_connection()` and `remove_node()` — exactly the kind of dual-bookkeeping that drifts out of sync. Replaced with a single `self.graph = nx.DiGraph()`; `update_connection()` and `remove_node()` now just call `add_edge`/`remove_node`, which networkx keeps consistent atomically. The on-disk `graph.json`/`scene.json` schema (what `scene_query.py` reads) is unchanged. Added `networkx` to `.devcontainer/Dockerfile`.
+  - Caught two real bugs while verifying this with a synthetic add/connect/re-score/remove/save round-trip before trusting it: `graph.out_edges(id)` raises instead of returning empty when `id` was never added as a node (fixed with an `if id in self.graph` guard), and `dict(graph.edges())` does *not* do what it looks like — `EdgeView` implements the `Mapping` protocol, so `dict()` treats edge tuples as keys via `.keys()`/`__getitem__` instead of treating them as `(u, v)` pairs. Fixed with an explicit `{u: v for u, v in self.graph.edges()}`.
+- **`ros2_ws/src/fetcher/setup.py`**: removed the `good_boy`/`seeker` console_script entries after those two files were deleted (they were early standalone Nav2/YOLO test scripts, superseded by `robot_adapter.py` + `search_and_fetch.py`). Without this, `colcon build` fails looking for the now-missing modules.
+
+All of the above were verified by importing/byte-compiling every touched file and exercising the new `SceneGraph` logic directly (not just by inspection) before being written down here.
+
 ## Current pipeline — how to run it end to end
 
 ```bash

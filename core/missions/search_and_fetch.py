@@ -29,7 +29,7 @@ from typing import Optional, Protocol
 import numpy as np
 
 from core.llm_zone import scene_query
-from core.llm_zone.active_perception import approach_pose, viewpoints
+from core.perception.active_perception import approach_pose, viewpoints
 from core.perception.detection.sam3_client import Sam3Client, mask_to_pointcloud
 
 

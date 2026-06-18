@@ -23,64 +23,9 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 
-from core.perception.detection.sam3_client import Sam3Client
+from core.perception.detection.sam3_client import Sam3Client, draw_detections
 
 CAMERA_TOPIC = '/head_rgbd_sensor/rgb/image_raw'
-
-
-# ── ROS2-agnostic: pure image + SAM3 ─────────────────────────────────────────
-
-def detect(image_bgr: np.ndarray, prompt: str) -> dict:
-    """
-    Run SAM3 on a single BGR image.  No ROS2 dependency.
-
-    Returns a plain dict so callers don't need to know about Sam3Detection:
-        {
-            "found":  bool,
-            "masks":  (N, H, W) bool,
-            "boxes":  (N, 4)    float32  [x1, y1, x2, y2],
-            "scores": (N,)      float32,
-        }
-    """
-    client = Sam3Client()
-    det = client.detect(image_bgr, prompt)
-    return {
-        "found":  det.found,
-        "masks":  det.masks,
-        "boxes":  det.boxes,
-        "scores": det.scores,
-    }
-
-
-def annotate(image_bgr: np.ndarray, result: dict, prompt: str) -> np.ndarray:
-    """Draw masks and bounding boxes on a copy of image_bgr."""
-    out = image_bgr.copy()
-    colors = [
-        (0, 220, 0), (0, 100, 255), (0, 0, 220),
-        (220, 220, 0), (0, 220, 220), (220, 0, 220),
-    ]
-
-    for i, (mask, box, score) in enumerate(
-            zip(result["masks"], result["boxes"], result["scores"])):
-        color = colors[i % len(colors)]
-
-        # semi-transparent mask fill
-        overlay = out.copy()
-        overlay[mask] = color
-        out = cv2.addWeighted(out, 0.55, overlay, 0.45, 0)
-
-        # bounding box + label
-        x1, y1, x2, y2 = box.astype(int)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(out, f"{prompt}  {score:.2f}",
-                    (x1, max(y1 - 6, 12)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-    if not result["found"]:
-        cv2.putText(out, f"NOT FOUND: {prompt}",
-                    (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 220), 2)
-
-    return out
 
 
 # ── Thin ROS2 wrapper: grab one frame ─────────────────────────────────────────
@@ -131,18 +76,16 @@ def main():
     print(f"[sam3_live_detect] Frame received: {frame.shape}  "
           f"→ querying SAM3 for '{prompt}' ...")
 
-    result = detect(frame, prompt)
+    det = Sam3Client().detect(frame, prompt)
 
-    if result["found"]:
-        n = len(result["scores"])
-        print(f"[sam3_live_detect] Found {n} instance(s).")
-        for i, (box, score) in enumerate(zip(result["boxes"], result["scores"])):
+    if det.found:
+        print(f"[sam3_live_detect] Found {len(det.scores)} instance(s).")
+        for i, (box, score) in enumerate(zip(det.boxes, det.scores)):
             print(f"  [{i}]  score={score:.3f}  box={box.astype(int).tolist()}")
     else:
         print(f"[sam3_live_detect] Nothing found for '{prompt}'.")
 
-    out = annotate(frame, result, prompt)
-    cv2.imwrite("sam3_output.jpg", out)
+    cv2.imwrite("sam3_output.jpg", draw_detections(frame, det, prompt))
     print("[sam3_live_detect] Annotated image saved to sam3_output.jpg")
 
 

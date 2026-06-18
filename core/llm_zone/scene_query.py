@@ -28,14 +28,10 @@ Returns JSON:
 """
 
 import json
-import os
 import sys
-from pathlib import Path
 
 from core.llm_zone._deepseek import get_client, strip_think
-
-DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
-GRAPH_DIR = DATA_DIR / "scene_graph"
+from core.utils.config import GRAPH_DIR
 
 SYSTEM = (
     "You are a scene graph reasoning agent. "

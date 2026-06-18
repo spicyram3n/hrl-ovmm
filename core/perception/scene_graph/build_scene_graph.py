@@ -19,12 +19,10 @@ Workflow on the real robot:
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial import KDTree
 
 # allow running as a script from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
@@ -35,9 +33,7 @@ from core.perception.segmentation.mask3d_interface import (
     load_predictions,
     load_scene_pointcloud,
 )
-
-DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
-GRAPH_DIR = DATA_DIR / "scene_graph"
+from core.utils.config import DATA_DIR, GRAPH_DIR
 
 # Furniture / anchors. Movable objects connect TO these (and the LLM later
 # clusters them into rooms). Names must be ScanNet200 labels.
@@ -114,17 +110,7 @@ def build_from_mask3d(
             confidence=inst.confidence,
         )
 
-    for node in scene_graph.nodes.values():
-        scene_graph.update_connection(node)
-    scene_graph.tree = KDTree(np.array([scene_graph.nodes[i].centroid for i in scene_graph.ids]))
-    scene_graph.color_with_ibm_palette()
-
-    print(f"[build] {len(scene_graph.nodes)} nodes from {len(instances)} Mask3D instances")
-    for node in scene_graph.nodes.values():
-        label = ID_TO_LABEL.get(node.sem_label, str(node.sem_label))
-        kind = "furniture" if not node.movable else "object"
-        print(f"  [{node.object_id:3d}] {label:<20} {kind:<10} conf={node.confidence:.2f} "
-              f"pts={node.points.shape[0]}")
+    scene_graph.finalize_and_report(f"{len(instances)} Mask3D instances")
 
 
 def main() -> None:

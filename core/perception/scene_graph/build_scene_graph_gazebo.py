@@ -34,16 +34,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial import KDTree
 
 # allow running as a script from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from core.perception.scene_graph.gazebo_geometry import euler_to_matrix, model_local_bbox
 from core.perception.scene_graph.scene_graph import SceneGraph
-
-DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
-GRAPH_DIR = DATA_DIR / "scene_graph"
+from core.utils.config import GRAPH_DIR
 
 # Furniture labels. Movable objects connect TO these.
 IMMOVABLE_LABELS_GZ = [
@@ -137,16 +134,7 @@ def build_from_world(scene_graph: SceneGraph, registry: list[dict]) -> None:
             movable=entry["label"] not in IMMOVABLE_LABELS_GZ,
         )
 
-    for node in scene_graph.nodes.values():
-        scene_graph.update_connection(node)
-    scene_graph.tree = KDTree(np.array([scene_graph.nodes[i].centroid for i in scene_graph.ids]))
-    scene_graph.color_with_ibm_palette()
-
-    print(f"[build] {len(scene_graph.nodes)} nodes from apartment.world ground truth")
-    for node in scene_graph.nodes.values():
-        kind = "furniture" if not node.movable else "object"
-        print(f"  [{node.object_id:3d}] {node.sem_label:<14} {kind:<10} "
-              f"centroid={np.round(node.centroid, 2)} dims={np.round(node.dimensions, 2)}")
+    scene_graph.finalize_and_report("apartment.world ground truth")
 
 
 def main() -> None:

@@ -63,17 +63,22 @@ Repo structure relevant to the pipeline:
 /home/ws/
 ├── core/
 │   ├── perception/
-│   │   ├── scene_graph/      # SceneGraph, ObjectNode, DrawerNode, builders,
+│   │   ├── scene_graph/      # SceneGraph, ObjectNode, builders,
 │   │   │                      # gazebo_geometry (reads sizes from Gazebo SDF)
 │   │   ├── segmentation/      # Mask3D output loader
-│   │   └── detection/         # SAM3 REST client
+│   │   ├── detection/         # SAM3 REST client
+│   │   ├── grasping/          # AnyGrasp REST client
+│   │   ├── active_perception.py  # approach/viewpoint pose geometry
+│   │   └── head_geometry.py      # head pan/tilt geometry
 │   ├── llm_zone/               # DeepSeek room clustering + scene queries
 │   ├── missions/                # search_and_fetch mission runner
-│   └── utils/                    # ScanNet200 label tables
+│   └── utils/                    # config.py (server endpoints, data paths),
+│                                  # rest_client.py, ScanNet200 label tables
 ├── docker/
 │   ├── mask3d/                   # Mask3D setup + run scripts (host)
-│   └── sam3/                      # SAM3 detection server (host)
-├── ros2_ws/src/fetcher/           # ROS 2 nodes (Nav2 goals, scene graph, seeker)
+│   ├── sam3/                      # SAM3 detection server (host)
+│   └── anygrasp/                   # AnyGrasp grasp-pose server (host)
+├── ros2_ws/src/fetcher/           # ROS 2 nodes (Nav2 goals, scene graph, search & fetch)
 ├── docs/report/                    # scene_graph_report.tex/pdf -- methodology
 │                                    # and demo-day code correlation
 ├── configs/config.yaml            # paths + model server endpoints
@@ -113,8 +118,8 @@ The container automatically:
 - Sources `/opt/ros/humble/setup.bash` and `/home/ws/ros2_ws/install/setup.bash`
 - Adds `/home/ws` to `PYTHONPATH` (so `core.*` is importable from anywhere)
 - Installs Python deps for the pure-Python core: `open3d`, `scipy`,
-  `scikit-learn`, `pandas`, `openai`, `graphviz`, `requests`,
-  `opencv-python`, `transforms3d`, `pyyaml`, `numpy<1.25`
+  `scikit-learn`, `networkx`, `pandas`, `openai`, `graphviz`, `requests`,
+  `opencv-python`, `transforms3d`, `pyyaml`, `trimesh`, `pycollada`, `numpy<1.25`
 - Installs ROS 2 system deps: `nav2-bringup`, `nav2-simple-commander`,
   `tf-transformations`, `gazebo-ros-pkgs`, `control-msgs`, `navigation2`
 - Runs `rosdep install` for `ros2_ws/src` (once, tracked by `.rosdep_installed`)
@@ -151,15 +156,6 @@ Bring up Nav2 with the included map (`map.yaml` / `map.pgm` at the repo root):
 ```bash
 ros2 launch hsrb_rosnav_config navigation_launch.py map:=/home/ws/map.yaml
 ```
-
-### Simple Nav2 goal demo
-
-```bash
-ros2 run fetcher good_boy
-```
-
-Sets an initial pose at the origin, waits for Nav2 to become active, and
-drives to a hardcoded goal `(2.0, 1.0)`.
 
 ---
 
@@ -300,10 +296,10 @@ by `search_and_fetch_node.py`.
    bash docker/sam3/run_sam3.sh
    ```
 
-3. HSR IK solver, used by `grasp()`:
+3. AnyGrasp grasp-pose server, used by `grasp()` (host):
 
    ```bash
-   ros2 launch fetcher ik_solver.launch.py
+   bash docker/anygrasp/run_anygrasp.sh
    ```
 
 ### Build the scene graph + room clusters (once per scene)
@@ -325,12 +321,9 @@ DEEPSEEK_API_KEY=<key> ros2 run fetcher search_and_fetch "<object>"
   its known location; if not found there, falls back to the LLM prediction.
 - At each candidate location the robot navigates, pans/tilts its head to
   look at the target (`HsrRobotAdapter.look_at`, active perception via
-  `core/llm_zone/active_perception.py`), and runs SAM3 detection. On a hit
-  it builds an RGB-D point cloud of the object and calls `grasp()` (top-down
-  grasp via `ik_solver_node` + the arm/gripper trajectory controllers).
+  `core/perception/active_perception.py`), and runs SAM3 detection. On a hit
+  it builds an RGB-D point cloud of the object and calls `grasp()` (collision-
+  aware grasp pose from AnyGrasp via `core/perception/grasping/anygrasp_client.py`,
+  then an analytic arm-joint formula - no separate IK service).
 
 Prints a final `MissionResult(found, grasped, location_label, tried)`.
-
-- `ros2_ws/src/fetcher/fetcher/seeker.py` — earlier YOLO + DeepSeek based
-  search-and-approach demo (`ros2 run fetcher seeker "<query>"`). Requires
-  `ultralytics` (not yet in the dev container image) and a running Nav2.

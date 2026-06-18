@@ -91,6 +91,34 @@ class Sam3Client(RestClient):
         return det
 
 
+_PALETTE = [
+    (0, 220, 0), (0, 100, 255), (0, 0, 220),
+    (220, 220, 0), (0, 220, 220), (220, 0, 220),
+]
+
+
+def draw_detections(image_bgr: np.ndarray, det: Sam3Detection, prompt: str) -> np.ndarray:
+    """Draw det's masks/boxes/scores on a copy of image_bgr (semi-transparent
+    mask fill + box + label), with a "NOT FOUND" banner if det is empty.
+    Used by scripts/sam3_segment.py and scripts/sam3_live_detect.py."""
+    out = image_bgr.copy()
+    for i in range(det.masks.shape[0]):
+        color = _PALETTE[i % len(_PALETTE)]
+        overlay = out.copy()
+        overlay[det.masks[i]] = color
+        out = cv2.addWeighted(out, 0.55, overlay, 0.45, 0)
+
+        x1, y1, x2, y2 = det.boxes[i].astype(int)
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(out, f"{prompt} {det.scores[i]:.2f}", (x1, max(y1 - 6, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+    if not det.found:
+        cv2.putText(out, f"NOT FOUND: {prompt}", (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 220), 2)
+    return out
+
+
 def mask_to_pointcloud(
     mask: np.ndarray,
     depth: np.ndarray,

@@ -20,9 +20,8 @@ Saves an overlay of the predicted masks/boxes to sam3_output.jpg.
 import sys
 
 import cv2
-import numpy as np
 
-from core.perception.detection.sam3_client import Sam3Client
+from core.perception.detection.sam3_client import Sam3Client, draw_detections
 
 
 def main():
@@ -36,23 +35,14 @@ def main():
 
     img = cv2.imread(image_path)
     det = Sam3Client().detect(img, prompt, conf=conf)
-    n, h, w = det.masks.shape
 
     # SAM3 runs at a fixed resolution, so resize the source image to match
     # before overlaying masks/boxes.
+    _, h, w = det.masks.shape
     img = cv2.resize(img, (w, h))
 
-    rng = np.random.default_rng(0)
-    for i in range(n):
-        color = rng.integers(0, 255, 3).tolist()
-        img[det.masks[i]] = (0.5 * img[det.masks[i]] + 0.5 * np.array(color)).astype(np.uint8)
-        x1, y1, x2, y2 = det.boxes[i].astype(int)
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(img, f"{prompt} {det.scores[i]:.2f}", (x1, max(y1 - 5, 0)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-
     out_path = "sam3_output.jpg"
-    cv2.imwrite(out_path, img)
+    cv2.imwrite(out_path, draw_detections(img, det, prompt))
     print(f"Saved visualization to {out_path}")
 
 

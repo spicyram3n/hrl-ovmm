@@ -44,6 +44,7 @@ RUN pip install --no-cache-dir \
     open3d \
     scipy \
     scikit-learn \
+    networkx \
     pandas \
     openai \
     graphviz \
