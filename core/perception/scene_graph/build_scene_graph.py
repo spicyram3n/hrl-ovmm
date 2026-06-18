@@ -32,7 +32,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from core.perception.scene_graph.scene_graph import SceneGraph
 from core.perception.segmentation.mask3d_interface import (
     ID_TO_LABEL,
-    LABEL_TO_ID,
     load_predictions,
     load_scene_pointcloud,
 )

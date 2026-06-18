@@ -37,11 +37,14 @@ class RobotAdapter(Protocol):
     """Thin interface the ROS 2 layer must implement."""
 
     def navigate_to(self, pose: dict) -> bool:
-        """Send a Nav2 goal {'x','y','qz','qw'} in the map frame, block until done."""
+        """Send a Nav2 goal {'x','y','qz','qw'} in Gazebo world-frame ground-truth
+        coordinates (as produced by the scene graph); the adapter converts to the
+        Nav2 map frame internally. Blocks until done."""
         ...
 
-    def look_at(self, point_map: list[float]) -> None:
-        """Point the head camera at a 3D map-frame point (active perception)."""
+    def look_at(self, point_world: list[float]) -> None:
+        """Point the head camera at a 3D world-frame ground-truth point (active
+        perception); the adapter converts to the map frame internally."""
         ...
 
     def get_rgbd(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

@@ -1,0 +1,86 @@
+# Session changelog — Gazebo/Nav2 frame fix, fetcher pipeline, AnyGrasp swap, cleanup
+
+This documents everything changed across this session, in the order it happened, in plain language. Scope note: every edit below is inside `fetcher`, `grasper`, `core/`, `scripts/`, or `docker/` — the official HSR/TMC ROS packages under `ros2_ws/src/` were left alone except for two explicitly-requested, one-off changes (called out below).
+
+## 1. Removed unused doors from the apartment world
+
+**Files:** `ros2_ws/src/tmc_gazebo/tmc_gazebo_worlds/worlds/apartment.world`, `apartment_fast.world` *(official package — explicitly requested)*
+
+Removed 5 door models (`door_x03y09`, `door_x05y09a`, `door_x08y09a`, `door_x10y11`, `door_x08y13`) and their matching door-stopper models from both Gazebo world files. Documented in `tmc_gazebo_worlds/README.md`'s new changelog section.
+
+## 2. Diagnosed and fixed the map/world coordinate mismatch
+
+**Problem:** the robot's localization ("map" frame, built by driving the robot around with SLAM) and Gazebo's own absolute coordinate system ("world" frame) are two different coordinate systems that happen to both use meters, which looked like they should match but don't. The SLAM map's origin sits wherever the robot was first spawned — `(5.0, 6.6)`, hardcoded in the Gazebo launch file — not at world `(0, 0)`. So a pose read straight from `apartment.world`'s ground truth and sent to Nav2 as a "map frame" goal was off by that fixed offset (we verified this: an object's true world position was ~7m from where the mismatch put it; after correcting by the offset, it landed ~1m away — about right for a camera shot of a tabletop object).
+
+**Fix:** added a static transform broadcaster (`world → map`, translation `(5.0, 6.6, 0)`, no rotation) to `hsrb_apartment_world.launch.py` *(official package — explicitly requested)*. This makes the conversion a standard TF lookup instead of manual arithmetic anywhere a world-frame pose needs to become a map-frame Nav2 goal.
+
+**Verification commands:**
+```bash
+ros2 run tf2_ros tf2_echo world map              # should show (5.0, 6.6, 0.0)
+ros2 run tf2_ros tf2_echo world base_footprint   # robot's Nav2-believed pose, in world frame
+```
+Compare the second one against the robot's actual position in the Gazebo GUI's Entity Tree to confirm localization is sane.
+
+## 3. Restored the `fetcher` ROS2 package
+
+It existed in an earlier commit (`c94d379`) and was accidentally deleted in the next one (`4472b76`). Restored `package.xml`, `setup.py`/`setup.cfg`, `resource/`, `test/`, and the five Python files (`gazebo_scene_graph.py`, `good_boy.py`, `robot_adapter.py`, `search_and_fetch_node.py`, `seeker.py`).
+
+## 4. Fixed `robot_adapter.py` to use the world→map transform correctly
+
+The scene graph (`build_scene_graph_gazebo.py`) reads object positions straight from `apartment.world`'s ground truth — i.e. **world frame**. But `navigate_to()` and `look_at()` were treating those positions as if they were already **map frame**, which is exactly the bug from §2. Fixed by stamping incoming poses/points as `frame_id="world"` and letting `tf2` convert them to `map` before use. `seeker.py` and `good_boy.py` needed no changes — neither ever touches world-frame ground truth (they compute positions live from the camera via TF, which was always self-consistent).
+
+## 5. Fixed a wall-clock vs sim-time bug in `robot_adapter.py`
+
+**Symptom:** `look_at()` and `grasp()` failed with `Lookup would require extrapolation into the future`.
+
+**Cause:** the `HsrRobotAdapter` node never declared `use_sim_time`, so its own clock used wall-clock time (a huge Unix-epoch number) while Gazebo's TF tree is stamped with simulated time (small numbers, starting near 0). Every TF lookup looked like it was asking for a transform from the far future.
+
+**Fix:** pass `parameter_overrides=[Parameter('use_sim_time', True)]` to the node's constructor so its clock matches the simulator's.
+
+## 6. Replaced the custom IK-solver grasp path with AnyGrasp
+
+**Why:** AnyGrasp's own grasp-pose selection already accounts for collisions, so running it through a *second*, separate collision-aware IK solver was redundant work and extra load for no benefit.
+
+**Change:** `robot_adapter.py`'s `grasp()` now calls the existing `AnygraspClient` (`core/perception/grasping/anygrasp_client.py`, talking to the `docker/anygrasp` server) instead of the old `grasp_planner.compute_grasp_pose()` + `ik_solver_node/solve_ik_with_collision` service. Arm joints are computed with the same simple analytic formula already proven in `scripts/grasp_pipeline.py` (no IK service involved at all). The masked object's point cloud is reused as both the "item" and "env" cloud AnyGrasp's API expects (no separate background-scene capture yet — a possible future improvement if grasp quality needs it).
+
+**Removed as a result:** `launch/ik_solver.launch.py` (dead), `core/perception/grasping/grasp_planner.py` (dead), and the now-unneeded `tmc_manipulation_msgs`/`moveit_msgs`/`tmc_ik_solver_node` entries in `fetcher/package.xml`.
+
+## 7. Dead-code / unused-import sweep
+
+Ran `flake8 --select=F401,F811,F841,F821` plus a manual cross-check of every file under `core/`, `scripts/`, `fetcher/`, `grasper/` against their entry points, and removed:
+- `core/perception/scene_graph/build_scene_graph.py`: unused `LABEL_TO_ID` import
+- `scripts/grasp_pipeline.py`: unused `CameraInfo`, `PoseStamped`, `tf2_geometry_msgs` imports
+- `ros2_ws/src/fetcher/fetcher/good_boy.py`: unused `Node` import and an unused `feedback` variable (confirmed `nav.isTaskComplete()` already pumps the node — the discarded `getFeedback()` call wasn't doing anything)
+
+Intentional standalone tools (`room_clustering.py`, `build_scene_graph.py`, everything in `scripts/`) were left alone — they're run directly (`python -m ...` / `python3 scripts/...`), not imported, so they only *look* unused to a naive "is this imported anywhere" check.
+
+## 8. Simplification pass (reduce unnecessary complexity/duplication)
+
+- **`scripts/sam3_segment.py`** (82 → ~32 lines): it hand-rolled the exact SAM3 wire-protocol parsing (the `X-Sam3-Meta` header, raw mask/box/score byte unpacking) that `core/perception/detection/sam3_client.py`'s `Sam3Client.detect()` already implements. Rewrote it to just use `Sam3Client`.
+- **New file `core/llm_zone/_deepseek.py`**: factored out two pieces of logic that were copy-pasted three times across `scene_query.py` (twice) and `room_clustering.py` (once) — getting a DeepSeek `OpenAI` client (raising if `DEEPSEEK_API_KEY` isn't set) and stripping the `<think>...</think>` preamble that `deepseek-reasoner` prepends to its answers. Both files now import `get_client()`/`strip_think()` instead of repeating the logic.
+- **`core/llm_zone/active_perception.py`'s `approach_pose()`**: it computed the approach yaw via `atan2(y - ay, x - ax)`, which *looked* like real geometry but, given how `ax`/`ay` are constructed two lines above, always evaluates to exactly `0`. Replaced with the literal constant `qz=0.0, qw=1.0` plus a comment explaining why, so a future reader isn't misled into thinking it's doing something direction-dependent.
+
+All three were verified to produce identical output to the code they replaced before being committed to this log.
+
+## Current pipeline — how to run it end to end
+
+```bash
+# 1. Sim (world→map static transform is now baked into this launch file)
+ros2 launch hsrb_gazebo_launch hsrb_apartment_world.launch.py use_navigation:=False
+
+# 2. Navigation, pointed at the SLAM-built map
+ros2 launch hsrb_rosnav_config navigation_launch.py \
+  map:=/home/ws/apartment_world_map.yaml use_sim_time:=True initial_orientation_xyzw:=[0,0,0,1]
+
+# 3. Perception servers (separate terminals/machines)
+bash docker/sam3/run_sam3.sh
+bash docker/anygrasp/run_anygrasp.sh
+
+# 4. Build the scene graph from world ground truth (run once per world)
+ros2 run fetcher gazebo_scene_graph
+
+# 5. Run the mission
+ros2 run fetcher search_and_fetch "pringles can"
+```
+
+No `ik_solver.launch.py` step anymore — AnyGrasp replaced that whole path.

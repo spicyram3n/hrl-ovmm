@@ -28,12 +28,10 @@ from core.perception.grasping.anygrasp_client import (
 )
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import PointCloud2, Image, CameraInfo
-from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import PointCloud2, Image
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Duration
 import tf2_ros
-import tf2_geometry_msgs
 
 # ── Config ────────────────────────────────────────────────────────────────
 ANYGRASP_URL = "http://localhost:5000/graspnet/predict"

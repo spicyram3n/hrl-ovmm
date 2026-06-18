@@ -20,13 +20,13 @@ def approach_pose(centroid: list[float], standoff: float = 0.8) -> dict:
     """
     Primary nav goal: a pose standoff metres in front of the target, facing it.
 
-    Approaches from the -X direction by default. A costmap-aware version
-    would pick the nearest unoccupied approach direction instead.
+    Approaches from the -X direction by default, facing back along +X (yaw=0).
+    A costmap-aware version would pick the nearest unoccupied approach
+    direction instead, computing yaw from the actual approach vector.
     """
     x, y = centroid[0], centroid[1]
     ax, ay = x - standoff, y
-    yaw = math.atan2(y - ay, x - ax)
-    return {"x": ax, "y": ay, "qz": math.sin(yaw / 2), "qw": math.cos(yaw / 2)}
+    return {"x": ax, "y": ay, "qz": 0.0, "qw": 1.0}
 
 
 def viewpoints(centroid: list[float], radius: float = 0.9,

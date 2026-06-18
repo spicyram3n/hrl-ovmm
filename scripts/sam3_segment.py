@@ -17,14 +17,12 @@ Minimal host-side client for the SAM3 docker server (docker/sam3).
 Saves an overlay of the predicted masks/boxes to sam3_output.jpg.
 """
 
-import json
 import sys
 
 import cv2
 import numpy as np
-import requests
 
-SAM3_URL = "http://localhost:5005/sam3/predict"
+from core.perception.detection.sam3_client import Sam3Client
 
 
 def main():
@@ -36,40 +34,21 @@ def main():
     prompt = sys.argv[2]
     conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.5
 
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
-
-    resp = requests.post(
-        SAM3_URL,
-        files={"image": ("image.jpg", image_bytes, "image/jpeg")},
-        params={"prompt": prompt, "conf": conf},
-        timeout=120,
-    )
-    resp.raise_for_status()
-
-    meta = json.loads(resp.headers["X-Sam3-Meta"])
-    n, h, w = meta["num_instances"], meta["height"], meta["width"]
-    print(f"'{prompt}': {n} instance(s) found ({w}x{h})")
-
-    body = resp.content
-    mask_bytes = n * h * w
-    box_bytes = n * 4 * 4
-    masks = np.frombuffer(body[:mask_bytes], dtype=bool).reshape(n, h, w)
-    boxes = np.frombuffer(body[mask_bytes:mask_bytes + box_bytes], dtype=np.float32).reshape(n, 4)
-    scores = np.frombuffer(body[mask_bytes + box_bytes:], dtype=np.float32).reshape(n)
+    img = cv2.imread(image_path)
+    det = Sam3Client().detect(img, prompt, conf=conf)
+    n, h, w = det.masks.shape
 
     # SAM3 runs at a fixed resolution, so resize the source image to match
     # before overlaying masks/boxes.
-    img = cv2.imread(image_path)
     img = cv2.resize(img, (w, h))
 
     rng = np.random.default_rng(0)
     for i in range(n):
         color = rng.integers(0, 255, 3).tolist()
-        img[masks[i]] = (0.5 * img[masks[i]] + 0.5 * np.array(color)).astype(np.uint8)
-        x1, y1, x2, y2 = boxes[i].astype(int)
+        img[det.masks[i]] = (0.5 * img[det.masks[i]] + 0.5 * np.array(color)).astype(np.uint8)
+        x1, y1, x2, y2 = det.boxes[i].astype(int)
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-        cv2.putText(img, f"{prompt} {scores[i]:.2f}", (x1, max(y1 - 5, 0)),
+        cv2.putText(img, f"{prompt} {det.scores[i]:.2f}", (x1, max(y1 - 5, 0)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     out_path = "sam3_output.jpg"

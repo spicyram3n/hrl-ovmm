@@ -31,7 +31,8 @@ import json
 import os
 import sys
 from pathlib import Path
-from openai import OpenAI
+
+from core.llm_zone._deepseek import get_client, strip_think
 
 DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
 GRAPH_DIR = DATA_DIR / "scene_graph"
@@ -105,11 +106,7 @@ def load_scene() -> tuple[list[dict], dict[int, list]]:
 
 
 def query(user_query: str) -> dict:
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise ValueError("Set the DEEPSEEK_API_KEY environment variable")
-
-    client = OpenAI(base_url="https://api.deepseek.com/v1", api_key=api_key)
+    client = get_client()
     items, centroid_lookup = load_scene()
 
     response = client.chat.completions.create(
@@ -124,10 +121,7 @@ def query(user_query: str) -> dict:
         max_tokens=1024,
     )
 
-    raw = response.choices[0].message.content
-    if "</think>" in raw:
-        raw = raw.split("</think>")[-1].strip()
-
+    raw = strip_think(response.choices[0].message.content)
     result = json.loads(raw)
 
     # Attach type and centroid from our lookup — LLM doesn't need to copy coordinates
@@ -160,11 +154,7 @@ def predict_locations(target: str, k: int = 3) -> list[dict]:
     Scenario A: the target object is not in the scene graph.
     Ask the LLM for the top-k furniture locations to search, attach centroids.
     """
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise ValueError("Set the DEEPSEEK_API_KEY environment variable")
-    client = OpenAI(base_url="https://api.deepseek.com/v1", api_key=api_key)
-
+    client = get_client()
     items, centroid_lookup = load_scene()
     furniture = [it for it in items if it["type"] == "immovable"]
 
@@ -191,9 +181,7 @@ def predict_locations(target: str, k: int = 3) -> list[dict]:
         temperature=0.3,
         max_tokens=1024,
     )
-    raw = response.choices[0].message.content
-    if "</think>" in raw:
-        raw = raw.split("</think>")[-1].strip()
+    raw = strip_think(response.choices[0].message.content)
     predictions = json.loads(raw).get("predictions", [])[:k]
 
     for p in predictions:

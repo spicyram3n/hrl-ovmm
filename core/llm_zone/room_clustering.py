@@ -29,7 +29,8 @@ import os
 from pathlib import Path
 
 import numpy as np
-from openai import OpenAI
+
+from core.llm_zone._deepseek import get_client, strip_think
 
 DATA_DIR = Path(os.environ.get("HRL_DATA_DIR", "/home/ws/data"))
 GRAPH_DIR = DATA_DIR / "scene_graph"
@@ -56,10 +57,7 @@ def load_furniture(graph_dir: Path = GRAPH_DIR) -> list[dict]:
 
 
 def cluster_rooms(furniture: list[dict], model: str = "deepseek-chat") -> dict:
-    api_key = os.getenv("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise ValueError("Set the DEEPSEEK_API_KEY environment variable")
-    client = OpenAI(base_url="https://api.deepseek.com/v1", api_key=api_key)
+    client = get_client()
 
     response = client.chat.completions.create(
         model=model,
@@ -71,9 +69,7 @@ def cluster_rooms(furniture: list[dict], model: str = "deepseek-chat") -> dict:
         temperature=0.2,
         max_tokens=1024,
     )
-    raw = response.choices[0].message.content
-    if "</think>" in raw:
-        raw = raw.split("</think>")[-1].strip()
+    raw = strip_think(response.choices[0].message.content)
     result = json.loads(raw)
 
     # attach a geometric centroid per room for navigation / visualization
