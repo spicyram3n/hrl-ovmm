@@ -59,6 +59,14 @@ def euler_to_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
     return Rz @ Ry @ Rx
 
 
+def quat_to_euler(x: float, y: float, z: float, w: float) -> tuple[float, float, float]:
+    """Inverse of euler_to_matrix: (x, y, z, w) quaternion -> (roll, pitch, yaw)."""
+    roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1.0, 1.0))
+    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return roll, pitch, yaw
+
+
 def pose_to_matrix(pose_text: Optional[str]) -> np.ndarray:
     """Parse an SDF <pose>x y z roll pitch yaw</pose> into a 4x4 transform."""
     T = np.eye(4)

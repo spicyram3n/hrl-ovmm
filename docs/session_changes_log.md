@@ -91,6 +91,28 @@ Continues the log above. Same scope note applies: everything below is inside `fe
 
 All of the above were verified by importing/byte-compiling every touched file and exercising the new `SceneGraph` logic directly (not just by inspection) before being written down here.
 
+---
+
+# Session 3 — 2026-06-19: live ground-truth poses, Nav2 "unconnected trees" diagnosis
+
+## 11. Added a live pose snapshot to `build_scene_graph_gazebo.py`
+
+**Why:** the script read every object's pose once, from the world file's static spawn `<pose>`. Anything that moved after spawn (robot bumps it, gets picked up) made the ground-truth scene graph stale for the rest of the run.
+
+**Change:** added `fetch_live_poses()`, which grabs one snapshot of every model's current world-frame pose from Gazebo's own `/world/default/pose/info` topic — bridged to ROS2 as `tf2_msgs/msg/TFMessage` via a new line in `gz_parameter_bridge_node()` (`gazebo_bringup.launch.py`). `load_registry()` now uses a live pose per object when one's available, falling back to the world file's static spawn pose (so the script still works with Gazebo not running, e.g. for offline testing). `gazebo_geometry.py` gained `quat_to_euler()` (inverse of the existing `euler_to_matrix()`) to convert the bridged quaternion. A `--static-pose` flag forces the old spawn-pose-only behavior.
+
+**Files:** `core/perception/scene_graph/build_scene_graph_gazebo.py`, `core/perception/scene_graph/gazebo_geometry.py`, `ros2_ws/src/hsrb_simulator/hsrb_gazebo_bringup/launch/gazebo_bringup.launch.py` *(official package — one new bridge line, no existing bridges touched)*
+
+**Verification:** ran `fetch_live_poses()` standalone with no Gazebo running — confirmed it times out after ~2s and returns `{}` (graceful fallback) instead of hanging. The live-bridge path itself needs a real run (relaunch the sim, move an object, rerun the builder) to visually confirm the snapshot tracks it.
+
+## 12. Diagnosed a `navigation_launch.py` standalone "two unconnected trees" error
+
+**Symptom:** running `ros2 launch hsrb_rosnav_config navigation_launch.py map:=map.yaml ...` by hand failed two ways in sequence: `map_server` rejected `map.yaml` (wrong filename — `ipad_map.yaml` is what actually exists at the repo root, and it's for a different, real-world space anyway), and even after pointing at a real map, `planner_server` kept reporting `"map" and "base_link" ... not part of the same tree"`.
+
+**Cause:** launching `navigation_launch.py` alone never gets a `world → map` transform — that's published by `world_to_map_tf` inside `hsrb_apartment_world.launch.py` (added in §2 above), which also spawns the robot in the matching world at the exact pose the map was built from. Skip that launch file and `map` has no parent, so it can never connect to the robot's own TF tree (rooted at `world`).
+
+**Fix:** no code change needed — this repo's documented pipeline (see "Current pipeline" below) already covers it correctly with the matching `apartment_world_map.yaml`. Pointed at it directly, plus the equivalent one-command alternative: `ros2 launch hsrb_gazebo_launch hsrb_apartment_world.launch.py use_navigation:=true` (wires world + map + robot + nav together in one launch instead of the two-step manual flow).
+
 ## Current pipeline — how to run it end to end
 
 ```bash
