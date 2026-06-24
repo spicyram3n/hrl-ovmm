@@ -2,7 +2,7 @@
 build_scene_graph.py  —  REAL ROBOT PATH (Mask3D perception)
 -------------------------------------------------------------
 NOT used in the Gazebo simulation demo.  For the demo, use:
-    python -m core.perception.scene_graph.build_scene_graph_gazebo
+    python -m core.scene_graph.build_scene_graph_gazebo
 
 This builder reads Mask3D 3D instance segmentation output (ScanNet200
 closed-vocabulary labels from a real RGB-D scan) and populates a SceneGraph.
@@ -10,7 +10,7 @@ closed-vocabulary labels from a real RGB-D scan) and populates a SceneGraph.
 Workflow on the real robot:
     1. bash docker/mask3d/setup_mask3d.sh          (once, sets up Mask3D)
     2. bash docker/mask3d/run_mask3d.sh [ws]       (per scan, needs GPU)
-    3. python -m core.perception.scene_graph.build_scene_graph
+    3. python -m core.scene_graph.build_scene_graph
 
 --workspace defaults to $HRL_DATA_DIR (or /home/ws/data), where the scan
 (scene.ply) and Mask3D predictions.txt live.
@@ -27,7 +27,7 @@ import numpy as np
 # allow running as a script from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from core.perception.scene_graph.scene_graph import SceneGraph
+from core.scene_graph.scene_graph import SceneGraph
 from core.perception.segmentation.mask3d_interface import (
     ID_TO_LABEL,
     load_predictions,

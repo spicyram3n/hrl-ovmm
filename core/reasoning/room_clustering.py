@@ -19,7 +19,7 @@ Output: data/scene_graph/rooms.json
     }
 
 Usage:
-    DEEPSEEK_API_KEY=<key> python -m core.llm_zone.room_clustering
+    DEEPSEEK_API_KEY=<key> python -m core.reasoning.room_clustering
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from core.llm_zone._deepseek import get_client, strip_think
+from core.reasoning._deepseek import get_client, strip_think
 from core.utils.config import GRAPH_DIR
 
 SYSTEM = (

@@ -3,10 +3,6 @@ anygrasp_client.py
 -------------------
 Client for the AnyGrasp/GraspNet docker server (docker/anygrasp).
 
-Ports the grasp request/filter/top-k logic from the supervisor's
-graspnet_interface.py (originally from spot-compose), but talks to the
-server via core/utils/rest_client.py's RestClient instead of spot-compose's
-utils/docker_communication.py - same pattern as sam3_client.py.
 
 The server's wire protocol is fixed by the prebuilt graspnet:v1.0 image
 (docker/anygrasp/run_anygrasp.sh) and can't be changed on our end:

@@ -26,7 +26,7 @@ size, shape or current pose is hand-picked:
     instances.
 
 Usage:
-    python -m core.perception.scene_graph.build_scene_graph_gazebo [--visualize]
+    python -m core.scene_graph.build_scene_graph_gazebo [--visualize]
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ from tf2_msgs.msg import TFMessage
 # allow running as a script from anywhere
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from core.perception.scene_graph.gazebo_geometry import euler_to_matrix, model_local_bbox, quat_to_euler
-from core.perception.scene_graph.scene_graph import SceneGraph
+from core.scene_graph.gazebo_geometry import euler_to_matrix, model_local_bbox, quat_to_euler
+from core.scene_graph.scene_graph import SceneGraph
 from core.utils.config import GRAPH_DIR
 
 # Furniture labels. Movable objects connect TO these.
@@ -56,14 +56,13 @@ IMMOVABLE_LABELS_GZ = [
     "trolley", "couch", "coffee table", "desk", "chair", "cabinet", "table", "shelf",
 ]
 
-# Where to find apartment.world.xacro inside the mounted ROS 2 workspace.
 WORLD_XACRO = (
     Path(os.environ.get("HRL_ROS2_WS", "/home/ws/ros2_ws"))
     / "src/tmc_gazebo/tmc_gazebo_worlds/worlds/apartment.world.xacro"
 )
 
-# <include><name> in the world file -> human-readable label. Anything not
-# listed here (walls, doors, door stoppers, lawn_garden, ...) is structural
+# <include><name> in the world file -> readable label. Anything not
+# listed here (walls, doors, door stoppers, lawn_garden, etc.) is structural
 # and skipped.
 NAME_TO_LABEL = {
     "wagon": "trolley",
@@ -123,7 +122,15 @@ def load_registry(world_xacro: Path = WORLD_XACRO, live_poses: dict[str, tuple] 
     is in NAME_TO_LABEL, looking up each model's local bounding box
     (dims, center) from its own SDF via gazebo_geometry.model_local_bbox().
     Pose is taken from `live_poses` (see fetch_live_poses) when available;
-    otherwise it falls back to the world file's static spawn pose."""
+    otherwise it falls back to the world file's static spawn pose.
+
+    The world file lists everything that *could* exist, not what currently
+    does - an object deleted live from a running Gazebo (without also
+    editing world_xacro) would otherwise keep reappearing at its old static
+    pose forever. So when live_poses is non-empty (a real snapshot from a
+    running sim, not just an empty/offline fallback), an include missing
+    from it is treated as deleted and skipped, instead of falling back to
+    its stale spawn pose."""
     expanded = subprocess.run(
         ["xacro", str(world_xacro)], capture_output=True, text=True, check=True
     ).stdout
@@ -136,8 +143,12 @@ def load_registry(world_xacro: Path = WORLD_XACRO, live_poses: dict[str, tuple] 
         label = NAME_TO_LABEL.get(name)
         if label is None:
             continue
-        static_pose = tuple(float(v) for v in include.findtext("pose").split())
-        pose = live_poses.get(name, static_pose)
+        if live_poses:
+            if name not in live_poses:
+                continue  # Gazebo is live and confirms this object is gone
+            pose = live_poses[name]
+        else:
+            pose = tuple(float(v) for v in include.findtext("pose").split())
         dims, center = model_local_bbox(include.findtext("uri"))
         registry.append({"name": name, "label": label, "pose": pose, "dims": dims, "center": center})
     return registry

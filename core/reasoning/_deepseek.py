@@ -2,7 +2,6 @@
 _deepseek.py
 ------------
 Shared helpers for talking to DeepSeek chat models, used by scene_query.py
-and room_clustering.py.
 """
 
 import os

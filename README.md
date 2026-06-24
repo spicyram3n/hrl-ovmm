@@ -62,18 +62,18 @@ Repo structure relevant to the pipeline:
 ```
 /home/ws/
 ├── core/
-│   ├── perception/
-│   │   ├── scene_graph/      # SceneGraph, ObjectNode, builders,
-│   │   │                      # gazebo_geometry (reads sizes from Gazebo SDF)
-│   │   ├── segmentation/      # Mask3D output loader
-│   │   ├── detection/         # SAM3 REST client
-│   │   ├── grasping/          # AnyGrasp REST client
+│   ├── perception/        # sensing & understanding
+│   │   ├── segmentation/    # Mask3D output loader
+│   │   ├── detection/        # SAM3 REST client
 │   │   ├── active_perception.py  # approach/viewpoint pose geometry
 │   │   └── head_geometry.py      # head pan/tilt geometry
-│   ├── llm_zone/               # DeepSeek room clustering + scene queries
-│   ├── missions/                # search_and_fetch mission runner
-│   └── utils/                    # config.py (server endpoints, data paths),
-│                                  # rest_client.py, ScanNet200 label tables
+│   ├── scene_graph/        # world model: SceneGraph, ObjectNode, builders,
+│   │                       # gazebo_geometry (reads sizes from Gazebo SDF)
+│   ├── grasping/            # manipulation: AnyGrasp REST client
+│   ├── reasoning/            # DeepSeek room clustering + scene queries
+│   ├── missions/              # search_and_fetch mission runner
+│   └── utils/                  # config.py (server endpoints, data paths),
+│                                # rest_client.py, ScanNet200 label tables
 ├── docker/
 │   ├── mask3d/                   # Mask3D setup + run scripts (host)
 │   ├── sam3/                      # SAM3 detection server (host)
@@ -165,7 +165,7 @@ The simplest and currently primary scene graph builder. Instead of running
 any perception pipeline, it reads every object's name and pose straight from
 `apartment.world.xacro` (the simulation's ground truth), and reads each
 object's *size and shape* by parsing that object's own `model.sdf` collision
-geometry via `core/perception/scene_graph/gazebo_geometry.py` (box, cylinder,
+geometry via `core/scene_graph/gazebo_geometry.py` (box, cylinder,
 sphere, or mesh, including COLLADA unit correction). Nothing about an
 object's dimensions is hand-picked -- it feeds synthesized point clouds
 through the same `SceneGraph` / `ObjectNode` pipeline used for real scans.
@@ -177,7 +177,7 @@ plus a full code-correlation walkthrough of every demo-day requirement.
 ```bash
 ros2 run fetcher gazebo_scene_graph
 # or, equivalently, without ROS:
-python -m core.perception.scene_graph.build_scene_graph_gazebo [--visualize]
+python -m core.scene_graph.build_scene_graph_gazebo [--visualize]
 ```
 
 This prints all 24 objects (16 furniture + 8 movable items) with their
@@ -219,7 +219,7 @@ Produces `predictions.txt`, `pred_mask/`, `mesh_labeled.ply` in the workspace.
 ### Build the scene graph (dev container)
 
 ```bash
-python -m core.perception.scene_graph.build_scene_graph [--workspace <path>] [--visualize]
+python -m core.scene_graph.build_scene_graph [--workspace <path>] [--visualize]
 ```
 
 Writes the same `graph.json` / `scene.json` / `objects/*.json` outputs as §6.
@@ -234,7 +234,7 @@ require `DEEPSEEK_API_KEY` (free key at https://platform.deepseek.com).
 ### Room clustering
 
 ```bash
-DEEPSEEK_API_KEY=<key> python -m core.llm_zone.room_clustering
+DEEPSEEK_API_KEY=<key> python -m core.reasoning.room_clustering
 ```
 
 Clusters furniture into rooms (kitchen, living room, ...) using semantics +
@@ -243,7 +243,7 @@ spatial proximity, and writes `data/scene_graph/rooms.json`.
 ### Scene query
 
 ```bash
-DEEPSEEK_API_KEY=<key> python core/llm_zone/scene_query.py "something to drink"
+DEEPSEEK_API_KEY=<key> python core/reasoning/scene_query.py "something to drink"
 ```
 
 Returns the best-matching object/furniture (id, label, type, map-frame
@@ -306,7 +306,7 @@ by `search_and_fetch_node.py`.
 
 ```bash
 ros2 run fetcher gazebo_scene_graph                              # step 1
-DEEPSEEK_API_KEY=<key> python -m core.llm_zone.room_clustering   # step 2
+DEEPSEEK_API_KEY=<key> python -m core.reasoning.room_clustering   # step 2
 ```
 
 ### Run the mission (steps 3-7, single command)
@@ -323,7 +323,7 @@ DEEPSEEK_API_KEY=<key> ros2 run fetcher search_and_fetch "<object>"
   look at the target (`HsrRobotAdapter.look_at`, active perception via
   `core/perception/active_perception.py`), and runs SAM3 detection. On a hit
   it builds an RGB-D point cloud of the object and calls `grasp()` (collision-
-  aware grasp pose from AnyGrasp via `core/perception/grasping/anygrasp_client.py`,
+  aware grasp pose from AnyGrasp via `core/grasping/anygrasp_client.py`,
   then an analytic arm-joint formula - no separate IK service).
 
 Prints a final `MissionResult(found, grasped, location_label, tried)`.

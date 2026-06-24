@@ -9,13 +9,13 @@ navigate_to -> nav2_simple_commander.BasicNavigator
 look_at     -> TF + core/perception/head_geometry.py, publishes to
                /head_trajectory_controller/joint_trajectory
 get_rgbd    -> cached head camera topics
-grasp       -> core/perception/grasping/anygrasp_client.py (AnyGrasp server)
+grasp       -> core/grasping/anygrasp_client.py (AnyGrasp server)
                for a collision-aware grasp pose, then an analytic arm-joint
                formula - no separate IK service, since AnyGrasp's own grasp
                selection already accounts for collisions
 
 navigate_to() and look_at() receive poses/points sourced from the Gazebo
-scene graph (core/perception/scene_graph/build_scene_graph_gazebo.py),
+scene graph (core/scene_graph/build_scene_graph_gazebo.py),
 which are ground truth read straight from apartment.world.xacro - i.e. in
 Gazebo's "world" frame, not the Nav2 "map" frame (the SLAM map is anchored
 at the robot's spawn pose, not world (0,0)). hsrb_apartment_world.launch.py
@@ -46,7 +46,8 @@ from sensor_msgs.msg import CameraInfo, Image, JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from core.perception import head_geometry
-from core.perception.grasping.anygrasp_client import AnygraspClient
+from core.perception.active_perception import CostmapGrid, approach_pose, reachable_approach_pose
+from core.grasping.anygrasp_client import AnygraspClient
 
 # ── Topics & frames ──────────────────────────────────────────────────────────
 COLOR_TOPIC   = '/head_rgbd_sensor/rgb/image_raw'
@@ -180,10 +181,64 @@ class HsrRobotAdapter(Node):
             self.get_logger().error(f'navigate_to: TF {WORLD_FRAME}->{MAP_FRAME} failed ({e})')
             return False
 
+        return self._goto_map_pose(goal)
+
+    def _goto_map_pose(self, goal: PoseStamped) -> bool:
         self.nav.goToPose(goal)
         while not self.nav.isTaskComplete():
             time.sleep(0.1)
         return self.nav.getResult() == TaskResult.SUCCEEDED
+
+    def _global_costmap_grid(self) -> CostmapGrid | None:
+        """Fetch and convert Nav2's global costmap, or None if unavailable."""
+        try:
+            costmap = self.nav.getGlobalCostmap()
+        except Exception as e:
+            self.get_logger().warn(f'navigate_near: getGlobalCostmap failed ({e})')
+            return None
+        data = np.asarray(costmap.data, dtype=np.uint8).reshape(
+            costmap.metadata.size_y, costmap.metadata.size_x)
+        return CostmapGrid(
+            data=data,
+            resolution=costmap.metadata.resolution,
+            origin_x=costmap.metadata.origin.position.x,
+            origin_y=costmap.metadata.origin.position.y,
+        )
+
+    def navigate_near(self, centroid_world: list[float], reach_min: float, reach_max: float) -> bool:
+        """Navigate within [reach_min, reach_max] of a world-frame point,
+        using the global costmap to pick a free, reachable standoff instead
+        of approach_pose()'s fixed offset. Falls back to that fixed offset
+        if the costmap or TF isn't available, or if every cell in the reach
+        band turns out to be blocked."""
+        pt = PointStamped()
+        pt.header.frame_id = WORLD_FRAME
+        pt.header.stamp = self.get_clock().now().to_msg()
+        pt.point.x, pt.point.y, pt.point.z = float(centroid_world[0]), float(centroid_world[1]), 0.0
+
+        try:
+            pt_map = self.tf_buf.transform(pt, MAP_FRAME, timeout=rclpy.duration.Duration(seconds=1.0))
+        except Exception as e:
+            self.get_logger().warn(f'navigate_near: TF {WORLD_FRAME}->{MAP_FRAME} failed ({e}), '
+                                    'falling back to fixed standoff')
+            return self.navigate_to(approach_pose(centroid_world))
+
+        grid = self._global_costmap_grid()
+        pose_map = (reachable_approach_pose([pt_map.point.x, pt_map.point.y], grid, reach_min, reach_max)
+                    if grid is not None else None)
+        if pose_map is None:
+            self.get_logger().warn('navigate_near: no free cell in reach band, '
+                                    'falling back to fixed standoff')
+            return self.navigate_to(approach_pose(centroid_world))
+
+        goal = PoseStamped()
+        goal.header.frame_id = MAP_FRAME
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.pose.position.x = pose_map['x']
+        goal.pose.position.y = pose_map['y']
+        goal.pose.orientation.z = pose_map['qz']
+        goal.pose.orientation.w = pose_map['qw']
+        return self._goto_map_pose(goal)
 
     # ── active perception: head control ───────────────────────────────────────
 
@@ -222,6 +277,41 @@ class HsrRobotAdapter(Node):
         self.get_logger().info(f'[look_at] pan={new_pan:.2f} tilt={tilt:.2f}')
 
         self.spin_for(SETTLE_SECS)
+
+    def localize_point(self, point_camera: list[float]) -> list[float] | None:
+        """A point in the camera's own frame -> world frame, via a live TF
+        lookup of the robot's actual current pose. Used to re-aim at where a
+        just-detected object really is, instead of trusting that navigation
+        landed exactly on the planned approach pose."""
+        pt = PointStamped()
+        pt.header.frame_id = CAMERA_FRAME
+        pt.header.stamp = self.get_clock().now().to_msg()
+        pt.point.x, pt.point.y, pt.point.z = (
+            float(point_camera[0]), float(point_camera[1]), float(point_camera[2]))
+
+        try:
+            pt_world = self.tf_buf.transform(pt, WORLD_FRAME, timeout=rclpy.duration.Duration(seconds=1.0))
+        except Exception as e:
+            self.get_logger().warn(f'localize_point: TF {CAMERA_FRAME}->{WORLD_FRAME} failed ({e})')
+            return None
+        return [pt_world.point.x, pt_world.point.y, pt_world.point.z]
+
+    def get_pose(self) -> list[float] | None:
+        """Robot's current position (base_footprint origin) in world-frame
+        ground truth, via a live TF lookup. Used to pick the nearest match
+        when a query matches multiple identically-labeled objects - the LLM
+        has no spatial awareness of where the robot currently is."""
+        pt = PointStamped()
+        pt.header.frame_id = BASE_FRAME
+        pt.header.stamp = self.get_clock().now().to_msg()
+        pt.point.x = pt.point.y = pt.point.z = 0.0
+
+        try:
+            pt_world = self.tf_buf.transform(pt, WORLD_FRAME, timeout=rclpy.duration.Duration(seconds=1.0))
+        except Exception as e:
+            self.get_logger().warn(f'get_pose: TF {BASE_FRAME}->{WORLD_FRAME} failed ({e})')
+            return None
+        return [pt_world.point.x, pt_world.point.y, pt_world.point.z]
 
     # ── camera ────────────────────────────────────────────────────────────────
 
@@ -295,7 +385,22 @@ class HsrRobotAdapter(Node):
         }
 
     def grasp(self, object_pcd) -> bool:
-        grasps = self.anygrasp.predict(object_pcd, object_pcd)
+        # AnyGrasp wants an environment cloud too (for collision filtering);
+        # we only have the object's own masked cloud here, so pass it for
+        # both - same as before the GCNGrasp-VP detour.
+        #
+        # top_down_grasp=False (was the AnyGrasp client's default True):
+        # _grasp_pose_to_joints below only ever reads the grasp's *position*
+        # (tf_base[:3, 3]) - it discards AnyGrasp's chosen orientation
+        # entirely and always commands the same fixed wrist_flex/arm_roll,
+        # so whatever approach direction AnyGrasp actually picked is never
+        # reflected in what the arm executes. This toggle doesn't fix that -
+        # it just changes which (x, y, z) AnyGrasp returns, which may or may
+        # not land somewhere the fixed wrist angle handles better. The real
+        # fix is deriving wrist_flex/arm_roll from tf_base[:3, :3] instead of
+        # hardcoding them, which needs live testing against the real arm to
+        # get the axis conventions right rather than guessing it blind.
+        grasps = self.anygrasp.predict(object_pcd, object_pcd, top_down_grasp=False)
         if not grasps:
             self.get_logger().error('grasp: AnyGrasp found no valid candidates')
             return False
@@ -311,6 +416,18 @@ class HsrRobotAdapter(Node):
 
         self._send_gripper(GRIPPER_OPEN)
         self.spin_for(GRIPPER_SETTLE_SECS)
+
+        # Two-phase move instead of sending every joint at once: lift first
+        # with the arm still tucked in (arm_flex at its retracted limit,
+        # 0.0), *then* extend forward to the target. Commanding lift and
+        # forward-reach together lets the controller interpolate them
+        # simultaneously, so the gripper can sweep forward while still
+        # rising - exactly what risks clipping the edge of whatever surface
+        # the object is resting on. Wrist/roll can move during the lift too
+        # (they only orient the gripper, they don't extend the reach).
+        lift_then_reach = dict(joints, arm_flex_joint=0.0)
+        self._send_arm(ARM_JOINTS, [lift_then_reach[j] for j in ARM_JOINTS])
+        self.spin_for(ARM_SETTLE_SECS)
 
         self._send_arm(ARM_JOINTS, [joints[j] for j in ARM_JOINTS])
         self.spin_for(ARM_SETTLE_SECS)

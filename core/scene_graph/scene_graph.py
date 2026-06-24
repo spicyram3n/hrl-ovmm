@@ -13,7 +13,7 @@ import open3d.visualization.gui as gui  # type: ignore
 import open3d.visualization.rendering as rendering  # type: ignore
 from scipy.spatial import KDTree
 
-from core.perception.scene_graph.graph_nodes import ObjectNode
+from core.scene_graph.graph_nodes import ObjectNode
 
 
 class SceneGraph:
@@ -165,7 +165,17 @@ class SceneGraph:
             json.dump(scene, f, indent=4)
 
     def save_objects_to_json(self, dir_path: str) -> None:
-        """Write one {id}.json per movable node."""
+        """Write one {id}.json per movable node.
+
+        Clears dir_path first: graph.json/scene.json are fully overwritten
+        each run (a plain json.dump of the current state), but this writes
+        one file per node, so without clearing, a node removed since the
+        last run (e.g. an object deleted from the world) would leave its
+        old {id}.json behind forever instead of disappearing."""
+        if os.path.isdir(dir_path):
+            for f in os.listdir(dir_path):
+                if f.endswith(".json"):
+                    os.remove(os.path.join(dir_path, f))
         for node in self.nodes.values():
             if not node.movable:
                 continue

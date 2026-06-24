@@ -1,0 +1,163 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+
+\hypersetup{colorlinks=true, linkcolor=blue!50!black, urlcolor=blue!50!black}
+
+\lstdefinestyle{py}{
+    backgroundcolor=\color{gray!5},
+    basicstyle=\ttfamily\footnotesize,
+    breaklines=true,
+    frame=single,
+    rulecolor=\color{gray!40},
+    numbers=left,
+    numberstyle=\tiny\color{gray!60},
+    language=Python,
+    tabsize=4,
+    columns=fullflexible,
+}
+\lstset{style=py}
+
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+
+\title{The Robot Adapter: Navigation Techniques in OVMM}
+\author{}
+\date{}
+
+\begin{document}
+\sloppy
+\maketitle
+
+\section*{Role of the Robot Adapter}
+
+\texttt{core/missions/search\_and\_fetch.py} defines a \texttt{RobotAdapter} protocol
+(\texttt{navigate\_to}, \texttt{navigate\_near}, \texttt{look\_at}, \texttt{get\_rgbd},
+\texttt{grasp}) entirely in pure Python, with no ROS dependency. The mission logic --
+``go to a candidate location, look, detect, grasp, repeat'' -- is written once against
+that protocol. \texttt{ros2\_ws/src/fetcher/fetcher/robot\_adapter.py}
+(\texttt{HsrRobotAdapter}) is the concrete implementation for the HSR: it is the only
+place where Nav2, TF, camera topics, and joint trajectories actually appear. This seam
+keeps the mission runner testable with a dry-run mock and reusable if the robot
+platform ever changes.
+
+\textbf{Frame handling.} The scene graph stores ground-truth poses in Gazebo's
+\texttt{world} frame; Nav2 plans in the \texttt{map} frame, which is anchored at the
+robot's spawn pose, not at \texttt{world} $(0,0)$. Every \texttt{navigate\_to}/
+\texttt{navigate\_near}/\texttt{look\_at} call stamps its input as \texttt{world} and
+lets a \texttt{tf2} buffer convert it, rather than assuming the two frames coincide.
+
+\section*{Navigation: Reachability-Aware Approach Poses}
+
+The first navigation approach picked a nav goal a fixed \texttt{standoff} (0.8\,m)
+directly along $-X$ from the target's centroid, regardless of what was actually there.
+This ignored both the environment (could land inside furniture, or facing a wall) and
+the manipulator (a deep shelf could put the object well beyond the arm's working
+range, producing visibly overstretched grasps). The fix replaces the fixed offset with
+a \emph{reachability-aware} search against Nav2's live global costmap:
+
+\begin{enumerate}[itemsep=2pt, topsep=2pt]
+  \item Fetch the global costmap (\texttt{BasicNavigator.getGlobalCostmap()}) and
+        convert it to a plain \texttt{CostmapGrid} (a small dataclass with no ROS
+        message dependency, so the search logic itself stays pure Python and unit
+        -testable: \texttt{core/perception/active\_perception.py}).
+  \item Around the target $(c_x, c_y)$, scan an annulus of candidate standoff points
+        $$ (v_x, v_y) = (c_x + r\cos\theta_i,\; c_y + r\sin\theta_i), \qquad
+           r \in [\,r_{\min}, r_{\max}\,],\;\; \theta_i = \tfrac{2\pi i}{n} $$
+        checking $r$ closest-first, so the tightest reachable spot wins over a
+        farther one.
+  \item Accept the first point whose costmap cost is below 253 (nav2\_costmap\_2d's
+        inscribed-obstacle threshold) -- i.e.\ genuinely free, not merely
+        ``discouraged.'' Its yaw faces back toward the target via $\mathrm{atan2}$,
+        so the nav goal itself doesn't waste a step facing the wrong way.
+\end{enumerate}
+
+This says nothing about how precisely Nav2 actually achieves that goal, though --
+real navigation has residual position/orientation error. That is handled separately,
+described next.
+
+\begin{lstlisting}[caption={Core search, \texttt{active\_perception.reachable\_approach\_pose}}]
+for radius in np.linspace(reach_min, reach_max, n_radii):
+    for i in range(n_angles):
+        angle = 2 * math.pi * i / n_angles
+        vx, vy = cx + radius * math.cos(angle), cy + radius * math.sin(angle)
+        cost = costmap.cost_at(vx, vy)
+        if cost is not None and cost < COSTMAP_BLOCKED_THRESHOLD:
+            return _facing_pose(cx, cy, vx, vy)
+\end{lstlisting}
+
+$r_{\min}$/$r_{\max}$ are \emph{not} a fixed pair of constants. An early version tied
+them to one global guess at the arm's comfortable reach, which doesn't generalize: a
+band measured from a target's centroid is too close for furniture with real depth (an
+HSR ended up base-to-edge against a table in practice) and needlessly far for a small
+object. They are now computed per candidate in
+\texttt{core/missions/search\_and\_fetch.py}'s \texttt{\_reach\_band()} as a fixed
+clearance (\texttt{CLEARANCE\_MIN}/\texttt{CLEARANCE\_MAX}, roughly the robot's own
+footprint radius) \emph{plus} that candidate's own \texttt{approach\_radius} --
+half of the supporting furniture's \emph{shorter} horizontal dimension
+(\texttt{core/reasoning/scene\_query.py}'s \texttt{\_approach\_radius()}), deliberately
+the shorter one since an approach is normally roughly perpendicular to a piece's long
+axis. A small side table and a long counter each get a standoff scaled to their own
+size instead of one constant tuned for neither.
+
+\textbf{Graceful degradation.} \texttt{navigate\_near} falls back to the original
+fixed-standoff \texttt{approach\_pose()} if the world$\to$map TF lookup fails, the
+costmap service is unavailable, or every cell in the reach band is blocked -- a
+mission step never hard-fails just because the costmap-aware path couldn't run.
+
+\section*{Active Perception, Re-centering, and the Grasp Handoff}
+
+Once parked, \texttt{look\_at} points the head camera at the target using pure
+trigonometry in \texttt{head\_geometry.py}: a pan delta from the bearing to the point
+in the current pan-link frame, and a tilt angle from its elevation in the base frame,
+both clamped to the joint limits read from the URDF. Both angles come from a live TF
+lookup of the robot's actual current pose -- not the nav goal it was aiming for -- so
+\texttt{look\_at} is already self-correcting for navigation error \emph{within} a
+single call.
+
+\textbf{Re-centering on the actual detection.} The first \texttt{look\_at} still aims
+at the a-priori centroid (from the scene graph or the LLM), not at the object itself,
+so if navigation stopped a little off from the planned approach pose, that first SAM3
+detection can land off-center or near the edge of the frame.
+\texttt{search\_and\_fetch.\_observe\_and\_detect} now treats that detection as
+provisional: it lifts the mask to a point cloud, takes its centroid, converts that
+camera-frame point back to world frame via a new adapter method
+(\texttt{localize\_point}, a live \texttt{CAMERA\_FRAME}$\to$\texttt{WORLD\_FRAME} TF
+lookup -- the mirror image of \texttt{look\_at}'s own conversion), and calls
+\texttt{look\_at} a second time on \emph{that} -- the object's real position, not the
+estimate. SAM3 runs once more on the re-centered view, and that second detection is
+what gets handed to \texttt{grasp()}. Either TF lookup or re-detection failing just
+falls back to the original detection rather than losing the object:
+\begin{lstlisting}[caption={search\_and\_fetch.py -- re-centering before grasping}]
+points = np.asarray(mask_to_pointcloud(mask, depth, K).points)
+center_world = robot.localize_point(points.mean(axis=0).tolist())
+if center_world is None:
+    return None                  # caller falls back to the original detection
+robot.look_at(center_world)      # aim at the object itself, not the a-priori estimate
+rgb2, depth2, K2 = robot.get_rgbd()
+det2 = sam3.detect(rgb2, target)
+\end{lstlisting}
+
+After that, \texttt{grasp()} hands the (now centered) point cloud to AnyGrasp,
+transforms the chosen grasp pose from camera frame to \texttt{base\_footprint} via a
+TF lookup taken at that exact moment, and converts it to arm joints with the same kind
+of analytic formula (no IK solver) -- AnyGrasp's own candidate ranking already
+accounts for collisions, so the adapter only needs to reach the pose it is given.
+
+\section*{Takeaway}
+
+The adapter's real job is reconciling three coordinate conventions (world ground
+truth, Nav2 map, robot base/camera) and never fully trusting where it \emph{meant} to
+end up: the costmap search turns an approximate target location into a reachable,
+collision-checked one instead of a hardcoded offset, and re-centering on the actual
+detection corrects for whatever residual error navigation still left, by looking
+again rather than assuming the first view was good enough. Both are the same
+principle -- consult live data instead of trusting the plan -- and it generalizes to
+any future grasp-region or approach-direction refinement.
+
+\end{document}

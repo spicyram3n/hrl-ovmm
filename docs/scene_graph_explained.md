@@ -1,7 +1,7 @@
 # Scene Graphs Explained (Beginner's Guide)
 
 This document explains, from scratch, what a "scene graph" is and how this
-project builds one in `core/perception/scene_graph/`. It's written for
+project builds one in `core/scene_graph/`. It's written for
 someone who is comfortable with basic Python but new to 3D geometry,
 point clouds, and robotics perception. It uses the project's *own* code and
 *real* output data (from `data/scene_graph/`) as examples throughout.
@@ -42,7 +42,7 @@ useful for *reasoning*:
 - "What is the apple sitting on?" → follow its **connection** to find the
   furniture node it's linked to.
 - "Which room is the kitchen?" → group furniture nodes by proximity +
-  semantics (this is what `core/llm_zone/room_clustering.py` does, using an
+  semantics (this is what `core/reasoning/room_clustering.py` does, using an
   LLM, on top of the scene graph).
 
 Everything downstream — navigation goals, "search and fetch" missions, LLM
@@ -56,8 +56,8 @@ The whole thing is built from two Python classes:
 
 | Class | File | Represents |
 |---|---|---|
-| `ObjectNode` | `core/perception/scene_graph/graph_nodes.py` | **One object**: its points, position, size, orientation |
-| `SceneGraph` | `core/perception/scene_graph/scene_graph.py` | **The whole map**: a collection of `ObjectNode`s plus the connections between them |
+| `ObjectNode` | `core/scene_graph/graph_nodes.py` | **One object**: its points, position, size, orientation |
+| `SceneGraph` | `core/scene_graph/scene_graph.py` | **The whole map**: a collection of `ObjectNode`s plus the connections between them |
 
 Think of `ObjectNode` as "one row in a spreadsheet describing one object",
 and `SceneGraph` as "the spreadsheet, plus a notebook of relationships
@@ -73,7 +73,7 @@ sampled from that object's surface. `ObjectNode.__init__` takes that point
 cloud and a few labels, and computes everything else automatically:
 
 ```python
-# core/perception/scene_graph/graph_nodes.py
+# core/scene_graph/graph_nodes.py
 def __init__(self, object_id, color, sem_label, points, mesh_mask,
               confidence=None, movable=True):
     self.object_id = object_id      # unique integer id, e.g. 18
@@ -238,7 +238,7 @@ re-localized).
 bookkeeping for connections and spatial queries.
 
 ```python
-# core/perception/scene_graph/scene_graph.py
+# core/scene_graph/scene_graph.py
 def __init__(self, label_mapping=None, min_confidence=0.0, k=2,
              immovable=None, pose=None):
     self.index = 0                   # next free node id
@@ -567,9 +567,9 @@ from `data/scene_graph/`.
 
 | File | Contents | Who reads it |
 |---|---|---|
-| `graph.json` | `node_ids`, `node_labels`, `connections` (the `outgoing` map), `immovable_ids`/`immovable_labels` | `core/llm_zone/scene_query.py` (to know what's "on" what) |
-| `scene.json` | `{furniture_id: {label, centroid, dimensions}}` — **immovable nodes only** | `core/llm_zone/room_clustering.py` (clusters furniture into rooms by label + centroid) |
-| `objects/{id}.json` | One file per **movable** node: `id, label, centroid, dimensions, pose, drawer, confidence` | `core/llm_zone/scene_query.py`, `core/missions/search_and_fetch.py` |
+| `graph.json` | `node_ids`, `node_labels`, `connections` (the `outgoing` map), `immovable_ids`/`immovable_labels` | `core/reasoning/scene_query.py` (to know what's "on" what) |
+| `scene.json` | `{furniture_id: {label, centroid, dimensions}}` — **immovable nodes only** | `core/reasoning/room_clustering.py` (clusters furniture into rooms by label + centroid) |
+| `objects/{id}.json` | One file per **movable** node: `id, label, centroid, dimensions, pose, drawer, confidence` | `core/reasoning/scene_query.py`, `core/missions/search_and_fetch.py` |
 
 The two LLM modules (`room_clustering.py`, `scene_query.py`) never see raw
 point clouds or geometry math — only this compact JSON. That's the whole
@@ -603,7 +603,7 @@ geometry" and "language-model reasoning about the room".
 
 1. **Run it and look at the output.**
    ```bash
-   python -m core.perception.scene_graph.build_scene_graph_gazebo --visualize
+   python -m core.scene_graph.build_scene_graph_gazebo --visualize
    ```
    Compare the printed table and the Open3D window to `data/scene_graph/graph.json`.
 
@@ -618,10 +618,10 @@ geometry" and "language-model reasoning about the room".
    fastest way to build intuition for what those functions actually do.
 
 4. **Read in this order**:
-   - `core/perception/scene_graph/graph_nodes.py` (small, self-contained — Section 3)
-   - `core/perception/scene_graph/scene_graph.py` (Section 4)
-   - `core/perception/scene_graph/build_scene_graph_gazebo.py` (Section 5.1 — no ML involved)
-   - `core/perception/scene_graph/gazebo_geometry.py` (the geometry details, Section 5.1 step 3)
+   - `core/scene_graph/graph_nodes.py` (small, self-contained — Section 3)
+   - `core/scene_graph/scene_graph.py` (Section 4)
+   - `core/scene_graph/build_scene_graph_gazebo.py` (Section 5.1 — no ML involved)
+   - `core/scene_graph/gazebo_geometry.py` (the geometry details, Section 5.1 step 3)
    - `core/perception/segmentation/mask3d_interface.py` and `build_scene_graph.py` (Section 5.2)
 
 5. **Try a small modification**: add a new `<include>` to a copy of the
